@@ -57,17 +57,14 @@ export async function runCritiquePipeline(
 
     const outputVideoPath = path.join(tmpDir, `critique_${critiqueId}.mp4`);
     const scriptPath = path.join(process.cwd(), "server/scripts/annotate_video.py");
-
-    // Build a clean env for python3.11 — strip PYTHONHOME/PYTHONPATH injected by the
-    // uv-managed Python 3.13 runtime so python3.11 uses its own stdlib and site-packages.
-    const cleanPythonEnv: NodeJS.ProcessEnv = { ...process.env };
-    delete cleanPythonEnv.PYTHONHOME;
-    delete cleanPythonEnv.PYTHONPATH;
+    // Use the shell wrapper to ensure PYTHONHOME/PYTHONPATH are unset before
+    // calling python3.11, preventing the uv Python 3.13 runtime from hijacking
+    // the stdlib lookup and causing SRE module mismatch errors.
+    const wrapperPath = path.join(process.cwd(), "server/scripts/run_python.sh");
 
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn("python3.11", [scriptPath, videoPath, critiqueJsonPath, outputVideoPath], {
+      const proc = spawn(wrapperPath, [scriptPath, videoPath, critiqueJsonPath, outputVideoPath], {
         stdio: ["ignore", "pipe", "pipe"],
-        env: cleanPythonEnv,
       });
       proc.stdout.on("data", (d) => console.log(`[Renderer] ${d.toString().trim()}`));
       proc.stderr.on("data", (d) => console.error(`[Renderer ERR] ${d.toString().trim()}`));
