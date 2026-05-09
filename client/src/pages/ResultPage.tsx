@@ -39,7 +39,8 @@ function ScoreRing({ score, label, size = 80 }: { score: number; label: string; 
     return () => clearTimeout(timer);
   }, []);
 
-  const color = score >= 75 ? "oklch(0.60 0.18 140)" : score >= 50 ? "oklch(0.75 0.18 65)" : "oklch(0.55 0.22 25)";
+  // Green for >= 80, yellow for < 80
+  const color = score >= 80 ? "oklch(0.72 0.20 142)" : "oklch(0.80 0.18 85)";
 
   return (
     <div className="flex flex-col items-center gap-2">
@@ -210,11 +211,19 @@ export default function ResultPage() {
                   <div className="flex items-center gap-2">
                     <div className="h-2 w-32 bg-secondary rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-primary rounded-full transition-all duration-1000"
-                        style={{ width: `${report?.overallScore ?? 0}%` }}
+                        className="h-full rounded-full transition-all duration-1000"
+                        style={{
+                          width: `${report?.overallScore ?? 0}%`,
+                          backgroundColor: (report?.overallScore ?? 0) >= 80 ? "oklch(0.72 0.20 142)" : "oklch(0.80 0.18 85)"
+                        }}
                       />
                     </div>
-                    <span className="font-mono font-bold text-primary">{report?.overallScore ?? 0}/100</span>
+                    <span
+                      className="font-mono font-bold"
+                      style={{ color: (report?.overallScore ?? 0) >= 80 ? "oklch(0.72 0.20 142)" : "oklch(0.80 0.18 85)" }}
+                    >
+                      {report?.overallScore ?? 0}/100
+                    </span>
                   </div>
                 </div>
               </div>

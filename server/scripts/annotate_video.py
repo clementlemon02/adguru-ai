@@ -230,10 +230,11 @@ def build_audio_track(video_path, segments, total_duration, tmp_dir):
 
     fd = AUDIO_FADE_SECS
     # Build volume expression for original audio: 1 outside voiceover windows, 0 inside
-    # Use piecewise: for each window [t0, t1], fade out [t0-fd, t0], silence [t0, t1], fade in [t1, t1+fd]
+    # seg_info uses t_start/audioDuration (not timestamp) — use t_start if available
     mute_windows = []
     for seg in voice_segs:
-        t0 = seg.get("timestamp", 0)
+        # seg_info stores t_start; original segments store timestamp
+        t0 = seg.get("t_start") if seg.get("t_start") is not None else seg.get("timestamp", 0)
         adur = seg.get("audioDuration") or ffprobe_duration(seg["audioPath"]) or 3.0
         t1 = t0 + adur
         mute_windows.append((max(0, t0 - fd), t0, t1, t1 + fd))
@@ -263,7 +264,9 @@ def build_audio_track(video_path, segments, total_duration, tmp_dir):
     mix_labels = ["[orig_vol]"]
 
     for i, seg in enumerate(voice_segs):
-        delay_ms = int(seg.get("timestamp", 0) * 1000)
+        # Use t_start (from seg_info) if available, else fall back to timestamp
+        t_start = seg.get("t_start") if seg.get("t_start") is not None else seg.get("timestamp", 0)
+        delay_ms = int(t_start * 1000)
         filter_parts.append(f"[{i+1}:a]adelay={delay_ms}|{delay_ms}[v{i}]")
         mix_labels.append(f"[v{i}]")
 

@@ -59,3 +59,8 @@
 - [x] Confirmed: multiple circles in user-uploaded video were from rendering ON TOP of already-annotated output (not a code bug)
 - [x] Confirmed: single annotation per segment renders exactly ONE circle
 - [x] All 8 tests passing
+
+## Phase 8: Audio & Report Card Fixes
+- [x] Fix duplicate audio tracks in critique video (multiple tracks playing simultaneously)
+- [x] Report card score rings: yellow for score < 80, green for score >= 80
+- [x] Overall score bar: yellow for < 80, green for >= 80
