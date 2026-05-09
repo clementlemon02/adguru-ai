@@ -64,3 +64,10 @@
 - [x] Fix duplicate audio tracks in critique video (multiple tracks playing simultaneously)
 - [x] Report card score rings: yellow for score < 80, green for score >= 80
 - [x] Overall score bar: yellow for < 80, green for >= 80
+
+## Phase 9: Audio Pipeline Rewrite (definitive fix)
+- [x] Replace FFmpeg amix filter_complex with pydub-based single-timeline approach
+- [x] pydub builds ONE audio track: silence original during voiceover windows, overlay voice at exact timestamps
+- [x] Merge step uses explicit -map 0:v:0 -map 1:a:0 to guarantee exactly 1 video + 1 audio stream
+- [x] Verified: output has nb_streams=2 (1 video + 1 audio only)
+- [x] All 8 tests passing

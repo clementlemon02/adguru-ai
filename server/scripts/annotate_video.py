@@ -199,94 +199,121 @@ def ffprobe_duration(path):
 
 def build_audio_track(video_path, segments, total_duration, tmp_dir):
     """
-    Build the final audio track:
-    - Original audio plays throughout at full volume
-    - Original audio fades to 0 during each voiceover window
-    - AI voiceover is placed at the correct timestamp
-    - Smooth 0.3s crossfade at boundaries
+    Build the final audio track using pydub for sample-level precision.
+    Produces EXACTLY ONE audio track:
+    - Original audio plays at full volume
+    - Original audio is silenced (volume=0) during each voiceover window
+    - AI voiceover is overlaid at the exact timestamp
+    - 0.3s fade out/in at boundaries
     """
-    orig_audio = os.path.join(tmp_dir, "orig_audio.wav")
+    from pydub import AudioSegment
+
+    SAMPLE_RATE = 44100
+    CHANNELS = 2
+    FADE_MS = int(AUDIO_FADE_SECS * 1000)
+
+    # ── Step 1: Extract original audio from video ──────────────────────────────
+    orig_wav = os.path.join(tmp_dir, "orig_audio.wav")
     r = subprocess.run(
         ["ffmpeg", "-y", "-i", video_path, "-vn",
-         "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", orig_audio],
+         "-acodec", "pcm_s16le", "-ar", str(SAMPLE_RATE), "-ac", str(CHANNELS), orig_wav],
         capture_output=True, timeout=60
     )
-    has_orig = r.returncode == 0 and os.path.exists(orig_audio) and os.path.getsize(orig_audio) > 1000
+    has_orig = r.returncode == 0 and os.path.exists(orig_wav) and os.path.getsize(orig_wav) > 1000
 
     voice_segs = [s for s in segments if s.get("audioPath") and os.path.exists(s.get("audioPath", ""))]
 
     if not voice_segs and not has_orig:
         return ""
 
+    total_ms = int(total_duration * 1000)
+
     if not voice_segs:
-        return orig_audio
+        # No voiceovers — just return original audio
+        return orig_wav
 
-    # Build filter_complex
-    # Input 0: original video (for audio)
-    # Inputs 1..N: voiceover segments
-    inputs = ["-i", video_path]
-    for seg in voice_segs:
-        inputs += ["-i", seg["audioPath"]]
-
-    fd = AUDIO_FADE_SECS
-    # Build volume expression for original audio: 1 outside voiceover windows, 0 inside
-    # seg_info uses t_start/audioDuration (not timestamp) — use t_start if available
-    mute_windows = []
-    for seg in voice_segs:
-        # seg_info stores t_start; original segments store timestamp
-        t0 = seg.get("t_start") if seg.get("t_start") is not None else seg.get("timestamp", 0)
-        adur = seg.get("audioDuration") or ffprobe_duration(seg["audioPath"]) or 3.0
-        t1 = t0 + adur
-        mute_windows.append((max(0, t0 - fd), t0, t1, t1 + fd))
-
-    # Volume expression: starts at 1, goes to 0 during each window
-    # vol = 1 - clamp(sum of muting contributions)
-    if mute_windows:
-        parts = []
-        for (fade_out_start, t0, t1, fade_in_end) in mute_windows:
-            # Fade out: linear from 1→0 over [fade_out_start, t0]
-            fade_out_dur = max(t0 - fade_out_start, 0.001)
-            # Silence: 0 during [t0, t1]
-            # Fade in: linear from 0→1 over [t1, fade_in_end]
-            fade_in_dur = max(fade_in_end - t1, 0.001)
-            parts.append(
-                f"between(t,{fade_out_start:.3f},{t0:.3f})*((t-{fade_out_start:.3f})/{fade_out_dur:.3f})+"
-                f"between(t,{t0:.3f},{t1:.3f})*1+"
-                f"between(t,{t1:.3f},{fade_in_end:.3f})*((1-(t-{t1:.3f})/{fade_in_dur:.3f}))"
-            )
-        mute_expr = "+".join(f"({p})" for p in parts)
-        vol_expr = f"max(0,1-({mute_expr}))"
-        orig_filter = f"[0:a]volume='{vol_expr}':eval=frame[orig_vol]"
+    # ── Step 2: Load or create the base timeline ───────────────────────────────
+    if has_orig:
+        try:
+            base = AudioSegment.from_wav(orig_wav)
+        except Exception as e:
+            print(f"[Audio] Could not load orig audio: {e}", file=sys.stderr)
+            base = AudioSegment.silent(duration=total_ms, frame_rate=SAMPLE_RATE)
     else:
-        orig_filter = "[0:a]volume=1[orig_vol]"
+        base = AudioSegment.silent(duration=total_ms, frame_rate=SAMPLE_RATE)
 
-    filter_parts = [orig_filter]
-    mix_labels = ["[orig_vol]"]
+    # Ensure base is exactly total_ms long
+    if len(base) < total_ms:
+        base = base + AudioSegment.silent(duration=total_ms - len(base), frame_rate=SAMPLE_RATE)
+    else:
+        base = base[:total_ms]
 
-    for i, seg in enumerate(voice_segs):
-        # Use t_start (from seg_info) if available, else fall back to timestamp
+    # Normalize to stereo
+    if base.channels != CHANNELS:
+        base = base.set_channels(CHANNELS)
+    if base.frame_rate != SAMPLE_RATE:
+        base = base.set_frame_rate(SAMPLE_RATE)
+
+    # ── Step 3: For each voiceover, silence the base and overlay the voice ─────
+    for seg in voice_segs:
         t_start = seg.get("t_start") if seg.get("t_start") is not None else seg.get("timestamp", 0)
-        delay_ms = int(t_start * 1000)
-        filter_parts.append(f"[{i+1}:a]adelay={delay_ms}|{delay_ms}[v{i}]")
-        mix_labels.append(f"[v{i}]")
+        t_start_ms = int(t_start * 1000)
 
-    n = len(mix_labels)
-    filter_parts.append(f"{''.join(mix_labels)}amix=inputs={n}:duration=longest:normalize=0[aout]")
-    filter_complex = ";".join(filter_parts)
+        # Load the voiceover clip
+        try:
+            voice = AudioSegment.from_file(seg["audioPath"])
+        except Exception as e:
+            print(f"[Audio] Could not load voice: {seg['audioPath']}: {e}", file=sys.stderr)
+            continue
 
+        # Normalize voice to same format
+        if voice.channels != CHANNELS:
+            voice = voice.set_channels(CHANNELS)
+        if voice.frame_rate != SAMPLE_RATE:
+            voice = voice.set_frame_rate(SAMPLE_RATE)
+
+        voice_ms = len(voice)
+        t_end_ms = min(t_start_ms + voice_ms, total_ms)
+
+        # Silence window: [t_start_ms - FADE_MS, t_end_ms + FADE_MS]
+        silence_start = max(0, t_start_ms - FADE_MS)
+        silence_end = min(total_ms, t_end_ms + FADE_MS)
+
+        # Extract the region to silence
+        before = base[:silence_start]
+        region = base[silence_start:silence_end]
+        after = base[silence_end:]
+
+        # Fade out at start, silence in middle, fade in at end
+        fade_out_dur = min(FADE_MS, len(region) // 2)
+        fade_in_dur = min(FADE_MS, len(region) // 2)
+        region_silenced = (
+            region[:fade_out_dur].fade_out(fade_out_dur) +
+            AudioSegment.silent(duration=max(0, len(region) - fade_out_dur - fade_in_dur), frame_rate=SAMPLE_RATE) +
+            region[-fade_in_dur:].fade_in(fade_in_dur) if fade_in_dur > 0 else
+            region[:fade_out_dur].fade_out(fade_out_dur) +
+            AudioSegment.silent(duration=max(0, len(region) - fade_out_dur), frame_rate=SAMPLE_RATE)
+        )
+
+        # Rebuild base with silenced region
+        base = before + region_silenced + after
+
+        # Ensure base is still exactly total_ms
+        if len(base) < total_ms:
+            base = base + AudioSegment.silent(duration=total_ms - len(base), frame_rate=SAMPLE_RATE)
+        else:
+            base = base[:total_ms]
+
+        # Overlay the voiceover at the correct position
+        voice_clip = voice[:min(voice_ms, total_ms - t_start_ms)]
+        base = base.overlay(voice_clip, position=t_start_ms)
+
+        print(f"[Audio] Overlaid voiceover at {t_start:.1f}s (dur={voice_ms/1000:.1f}s)")
+
+    # ── Step 4: Export single mixed WAV ───────────────────────────────────────
     mixed_audio = os.path.join(tmp_dir, "mixed_audio.wav")
-    cmd = (["ffmpeg", "-y"] + inputs +
-           ["-filter_complex", filter_complex,
-            "-map", "[aout]",
-            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
-            "-t", str(total_duration),
-            mixed_audio])
-
-    r2 = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
-    if r2.returncode != 0:
-        print(f"[Audio] Mix failed: {r2.stderr[-400:]}", file=sys.stderr)
-        return orig_audio if has_orig else ""
-
+    base.export(mixed_audio, format="wav")
+    print(f"[Audio] Mixed audio: {os.path.getsize(mixed_audio):,} bytes")
     return mixed_audio
 
 
@@ -445,9 +472,16 @@ def render(input_video, critique_json, output_video):
         # ── Merge ──────────────────────────────────────────────────────────────
         print("[Renderer] Merging video + audio...")
         if mixed_audio and os.path.exists(mixed_audio) and os.path.getsize(mixed_audio) > 1000:
+            # CRITICAL: use explicit -map to guarantee EXACTLY 1 video + 1 audio track.
+            # raw_video (from OpenCV) has NO audio. mixed_audio is our single pre-built track.
+            # -map 0:v:0 takes only the first video stream from raw_video.
+            # -map 1:a:0 takes only the first audio stream from mixed_audio.
+            # This prevents FFmpeg from auto-selecting any extra streams.
             merge_cmd = [
                 "ffmpeg", "-y",
                 "-i", raw_video, "-i", mixed_audio,
+                "-map", "0:v:0",
+                "-map", "1:a:0",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                 "-c:a", "aac", "-b:a", "192k",
                 "-shortest", output_video
@@ -455,6 +489,7 @@ def render(input_video, critique_json, output_video):
         else:
             merge_cmd = [
                 "ffmpeg", "-y", "-i", raw_video,
+                "-map", "0:v:0",
                 "-c:v", "libx264", "-preset", "fast", "-crf", "23",
                 "-an", output_video
             ]
