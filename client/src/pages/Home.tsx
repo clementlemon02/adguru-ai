@@ -117,9 +117,9 @@ function Navbar() {
         <Button
           size="sm"
           className="bg-amber-500 hover:bg-amber-400 text-black font-semibold"
-          onClick={() => document.getElementById("waitlist")?.scrollIntoView({ behavior: "smooth" })}
+          onClick={() => window.location.href = "/upload"}
         >
-          Join Waitlist
+          Try It Free
         </Button>
       </div>
     </nav>
@@ -186,9 +186,9 @@ function HeroSection() {
             <Button
               size="lg"
               className="bg-amber-500 hover:bg-amber-400 text-black font-bold text-base px-8 amber-glow transition-all duration-300"
-              onClick={() => document.getElementById("waitlist")?.scrollIntoView({ behavior: "smooth" })}
+              onClick={() => window.location.href = "/upload"}
             >
-              Get Early Access <ArrowRight className="ml-2 w-4 h-4" />
+              Analyze My Ad Free <ArrowRight className="ml-2 w-4 h-4" />
             </Button>
             <Button
               size="lg"

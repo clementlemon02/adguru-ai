@@ -217,4 +217,21 @@
   .score-ring-bg {
     stroke: oklch(1 0 0 / 8%);
   }
+
+  /* Upload dropzone */
+  .dropzone-active {
+    border-color: oklch(0.75 0.18 65) !important;
+    background: oklch(0.75 0.18 65 / 5%) !important;
+    box-shadow: 0 0 30px oklch(0.75 0.18 65 / 15%) !important;
+  }
+
+  /* Processing steps */
+  .step-active { color: oklch(0.75 0.18 65); }
+  .step-done { color: oklch(0.60 0.18 140); }
+  .step-pending { color: oklch(0.45 0.01 264); }
+
+  /* Critique type badges */
+  .badge-strength { background: oklch(0.60 0.18 140 / 15%); color: oklch(0.70 0.18 140); border: 1px solid oklch(0.60 0.18 140 / 30%); }
+  .badge-improvement { background: oklch(0.75 0.18 65 / 15%); color: oklch(0.75 0.18 65); border: 1px solid oklch(0.75 0.18 65 / 30%); }
+  .badge-warning { background: oklch(0.55 0.22 25 / 15%); color: oklch(0.70 0.22 25); border: 1px solid oklch(0.55 0.22 25 / 30%); }
 }

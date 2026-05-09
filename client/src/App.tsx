@@ -5,11 +5,19 @@ import { Route, Switch } from "wouter";
 import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
+import UploadPage from "./pages/UploadPage";
+import ProcessingPage from "./pages/ProcessingPage";
+import ResultPage from "./pages/ResultPage";
+import HistoryPage from "./pages/HistoryPage";
 
 function Router() {
   return (
     <Switch>
       <Route path={"/"} component={Home} />
+      <Route path={"/upload"} component={UploadPage} />
+      <Route path={"/processing/:id"} component={ProcessingPage} />
+      <Route path={"/result/:id"} component={ResultPage} />
+      <Route path={"/history"} component={HistoryPage} />
       <Route path={"/404"} component={NotFound} />
       <Route component={NotFound} />
     </Switch>
