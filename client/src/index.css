@@ -1,3 +1,10 @@
+/* ============================================================
+   AdGuru AI — "Dark Studio" Design System
+   Design Movement: Brutalist-meets-Cinema UI
+   Color Philosophy: Charcoal black + Warm amber (#F59E0B) accent
+   Typography: Space Grotesk (display) + JetBrains Mono (data)
+   ============================================================ */
+
 @import "tailwindcss";
 @import "tw-animate-css";
 
@@ -40,77 +47,56 @@
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+  /* Custom AdGuru tokens */
+  --color-amber: var(--amber);
+  --color-amber-dim: var(--amber-dim);
+  --color-studio-dark: var(--studio-dark);
+  --color-studio-card: var(--studio-card);
+  --color-studio-border: var(--studio-border);
 }
 
 :root {
-  --primary: var(--color-blue-700);
-  --primary-foreground: var(--color-blue-50);
-  --sidebar-primary: var(--color-blue-600);
-  --sidebar-primary-foreground: var(--color-blue-50);
-  --chart-1: var(--color-blue-300);
-  --chart-2: var(--color-blue-500);
-  --chart-3: var(--color-blue-600);
-  --chart-4: var(--color-blue-700);
-  --chart-5: var(--color-blue-800);
-  --radius: 0.65rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.235 0.015 65);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.235 0.015 65);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.235 0.015 65);
-  --secondary: oklch(0.98 0.001 286.375);
-  --secondary-foreground: oklch(0.4 0.015 65);
-  --muted: oklch(0.967 0.001 286.375);
-  --muted-foreground: oklch(0.552 0.016 285.938);
-  --accent: oklch(0.967 0.001 286.375);
-  --accent-foreground: oklch(0.141 0.005 285.823);
+  --radius: 0.5rem;
+  /* Dark Studio Palette */
+  --background: oklch(0.1 0.005 260);
+  --foreground: oklch(0.93 0.005 65);
+  --card: oklch(0.14 0.006 260);
+  --card-foreground: oklch(0.93 0.005 65);
+  --popover: oklch(0.14 0.006 260);
+  --popover-foreground: oklch(0.93 0.005 65);
+  /* Amber as primary */
+  --primary: oklch(0.75 0.18 65);
+  --primary-foreground: oklch(0.1 0.005 260);
+  --secondary: oklch(0.18 0.006 260);
+  --secondary-foreground: oklch(0.85 0.005 65);
+  --muted: oklch(0.18 0.006 260);
+  --muted-foreground: oklch(0.55 0.01 260);
+  --accent: oklch(0.75 0.18 65);
+  --accent-foreground: oklch(0.1 0.005 260);
   --destructive: oklch(0.577 0.245 27.325);
   --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(0.92 0.004 286.32);
-  --input: oklch(0.92 0.004 286.32);
-  --ring: oklch(0.623 0.214 259.815);
-  --sidebar: oklch(0.985 0 0);
-  --sidebar-foreground: oklch(0.235 0.015 65);
-  --sidebar-accent: oklch(0.967 0.001 286.375);
-  --sidebar-accent-foreground: oklch(0.141 0.005 285.823);
-  --sidebar-border: oklch(0.92 0.004 286.32);
-  --sidebar-ring: oklch(0.623 0.214 259.815);
-}
-
-.dark {
-  --primary: var(--color-blue-700);
-  --primary-foreground: var(--color-blue-50);
-  --sidebar-primary: var(--color-blue-500);
-  --sidebar-primary-foreground: var(--color-blue-50);
-  --background: oklch(0.141 0.005 285.823);
-  --foreground: oklch(0.85 0.005 65);
-  --card: oklch(0.21 0.006 285.885);
-  --card-foreground: oklch(0.85 0.005 65);
-  --popover: oklch(0.21 0.006 285.885);
-  --popover-foreground: oklch(0.85 0.005 65);
-  --secondary: oklch(0.24 0.006 286.033);
-  --secondary-foreground: oklch(0.7 0.005 65);
-  --muted: oklch(0.274 0.006 286.033);
-  --muted-foreground: oklch(0.705 0.015 286.067);
-  --accent: oklch(0.274 0.006 286.033);
-  --accent-foreground:  oklch(0.92 0.005 65);
-  --destructive: oklch(0.704 0.191 22.216);
-  --destructive-foreground: oklch(0.985 0 0);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.488 0.243 264.376);
-  --chart-1: var(--color-blue-300);
-  --chart-2: var(--color-blue-500);
-  --chart-3: var(--color-blue-600);
-  --chart-4: var(--color-blue-700);
-  --chart-5: var(--color-blue-800);
-  --sidebar: oklch(0.21 0.006 285.885);
-  --sidebar-foreground: oklch(0.85 0.005 65);
-  --sidebar-accent: oklch(0.274 0.006 286.033);
-  --sidebar-accent-foreground:  oklch(0.985 0 0);
-  --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.488 0.243 264.376);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 10%);
+  --ring: oklch(0.75 0.18 65);
+  --chart-1: oklch(0.75 0.18 65);
+  --chart-2: oklch(0.65 0.15 65);
+  --chart-3: oklch(0.55 0.12 65);
+  --chart-4: oklch(0.45 0.09 65);
+  --chart-5: oklch(0.35 0.06 65);
+  --sidebar: oklch(0.12 0.005 260);
+  --sidebar-foreground: oklch(0.93 0.005 65);
+  --sidebar-primary: oklch(0.75 0.18 65);
+  --sidebar-primary-foreground: oklch(0.1 0.005 260);
+  --sidebar-accent: oklch(0.18 0.006 260);
+  --sidebar-accent-foreground: oklch(0.93 0.005 65);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.75 0.18 65);
+  /* Custom */
+  --amber: oklch(0.75 0.18 65);
+  --amber-dim: oklch(0.65 0.15 65 / 20%);
+  --studio-dark: oklch(0.1 0.005 260);
+  --studio-card: oklch(0.14 0.006 260);
+  --studio-border: oklch(1 0 0 / 8%);
 }
 
 @layer base {
@@ -119,6 +105,15 @@
   }
   body {
     @apply bg-background text-foreground;
+    font-family: 'Space Grotesk', sans-serif;
+  }
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .font-mono {
+    font-family: 'JetBrains Mono', monospace;
   }
   button:not(:disabled),
   [role="button"]:not([aria-disabled="true"]),
@@ -134,44 +129,92 @@
 }
 
 @layer components {
-  /**
-   * Custom container utility that centers content and adds responsive padding.
-   *
-   * This overrides Tailwind's default container behavior to:
-   * - Auto-center content (mx-auto)
-   * - Add responsive horizontal padding
-   * - Set max-width for large screens
-   *
-   * Usage: <div className="container">...</div>
-   *
-   * For custom widths, use max-w-* utilities directly:
-   * <div className="max-w-6xl mx-auto px-4">...</div>
-   */
   .container {
     width: 100%;
     margin-left: auto;
     margin-right: auto;
-    padding-left: 1rem; /* 16px - mobile padding */
+    padding-left: 1rem;
     padding-right: 1rem;
   }
-
   .flex {
     min-height: 0;
     min-width: 0;
   }
-
   @media (min-width: 640px) {
     .container {
-      padding-left: 1.5rem; /* 24px - tablet padding */
+      padding-left: 1.5rem;
       padding-right: 1.5rem;
     }
   }
-
   @media (min-width: 1024px) {
     .container {
-      padding-left: 2rem; /* 32px - desktop padding */
+      padding-left: 2rem;
       padding-right: 2rem;
-      max-width: 1280px; /* Standard content width */
+      max-width: 1280px;
     }
+  }
+
+  /* AdGuru custom utilities */
+  .amber-glow {
+    box-shadow: 0 0 30px oklch(0.75 0.18 65 / 25%), 0 0 60px oklch(0.75 0.18 65 / 10%);
+  }
+  .amber-glow-text {
+    text-shadow: 0 0 20px oklch(0.75 0.18 65 / 50%);
+  }
+  .studio-card {
+    background: oklch(0.14 0.006 260);
+    border: 1px solid oklch(1 0 0 / 8%);
+  }
+  .studio-card-hover {
+    transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  .studio-card-hover:hover {
+    border-color: oklch(0.75 0.18 65 / 30%);
+    box-shadow: 0 0 20px oklch(0.75 0.18 65 / 10%);
+  }
+  .rec-dot::before {
+    content: '';
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ef4444;
+    margin-right: 6px;
+    animation: rec-pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes rec-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  .timecode {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.75rem;
+    color: oklch(0.55 0.01 260);
+    letter-spacing: 0.05em;
+  }
+  .section-diagonal {
+    clip-path: polygon(0 3%, 100% 0, 100% 97%, 0 100%);
+    margin-top: -2rem;
+    padding-top: 5rem;
+    padding-bottom: 5rem;
+  }
+  .annotation-circle {
+    border: 2px solid oklch(0.75 0.18 65);
+    border-radius: 50%;
+    box-shadow: 0 0 15px oklch(0.75 0.18 65 / 40%), inset 0 0 15px oklch(0.75 0.18 65 / 10%);
+    animation: annotation-pulse 2s ease-in-out infinite;
+  }
+  @keyframes annotation-pulse {
+    0%, 100% { box-shadow: 0 0 15px oklch(0.75 0.18 65 / 40%), inset 0 0 15px oklch(0.75 0.18 65 / 10%); }
+    50% { box-shadow: 0 0 25px oklch(0.75 0.18 65 / 70%), inset 0 0 20px oklch(0.75 0.18 65 / 20%); }
+  }
+  .score-ring {
+    stroke: oklch(0.75 0.18 65);
+    stroke-linecap: round;
+    filter: drop-shadow(0 0 6px oklch(0.75 0.18 65 / 60%));
+    transition: stroke-dashoffset 1.5s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .score-ring-bg {
+    stroke: oklch(1 0 0 / 8%);
   }
 }
