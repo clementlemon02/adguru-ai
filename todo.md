@@ -43,3 +43,12 @@
 - [x] Burn subtitles into the critique video (white text, black outline, bottom-center)
 - [x] Upgrade GPT-4o prompt: output conversational/interactive script (not formal), include zoom direction, subtitle text per point
 - [x] Upgrade ElevenLabs: use stability/similarity settings for more expressive, natural delivery
+
+## Phase 6: Renderer Overhaul — Natural Human Consultant Feel
+- [x] Original audio fully muted during AI voiceover, restored after (no ducking — full silence)
+- [x] Continuous video playback — video NEVER replays, always advances forward in time
+- [x] Remove all zoom-in / zoom-out / pan effects entirely
+- [x] GPT-4o prompt: single flowing narrative voiceover (not isolated points), subtitle_chunks array (4-6 word phrases per chunk)
+- [x] Subtitles: large bold centered text with dark semi-transparent pill background, clearly matching spoken words
+- [x] Annotation circles play over the live video (no freeze-frame), fade in/out naturally
+- [x] Smooth audio crossfade: original audio fades out 0.3s before AI speaks, fades back in after

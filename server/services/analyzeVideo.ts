@@ -1,8 +1,15 @@
 /**
- * AdGuru AI — Video Analysis Service (Enhanced)
- * Uses GPT-4o Vision to analyze extracted video frames and produce a
- * timestamped marketing critique with annotation coordinates, zoom effects,
- * subtitle text, and conversational voice script.
+ * AdGuru AI — GPT-4o Video Analysis Service (v3 — Flowing Narrative)
+ *
+ * Generates a flowing, natural voiceover critique — like a human consultant
+ * doing a live screen-recording review. The video plays continuously;
+ * the AI speaks naturally over it at specific timestamps.
+ *
+ * Key changes from v2:
+ * - No zoom effects (removed entirely)
+ * - subtitleChunks instead of subtitleText: word-synced short phrases
+ * - spokenScript is conversational narrative, not isolated bullet points
+ * - critiqueSegments (renamed from critiquePoints) sorted by timestamp
  */
 import { execSync } from "child_process";
 import fs from "fs";
@@ -11,21 +18,23 @@ import os from "os";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-export interface CritiquePoint {
-  timestamp: number;        // seconds into the video
-  timecode: string;         // "MM:SS" display string
-  type: "strength" | "improvement" | "warning";
-  title: string;            // short label e.g. "Strong Hook"
-  spokenScript: string;     // conversational, interactive spoken text for ElevenLabs
-  subtitleText: string;     // shorter subtitle version (max 12 words per line)
-  zoomEffect: "zoom_in" | "zoom_out" | "pan_left" | "pan_right" | "none";
+export interface SubtitleChunk {
+  text: string;       // 4–8 words matching exactly what is spoken
+  offsetSec: number;  // seconds after this segment starts when this chunk appears
+}
+
+export interface CritiqueSegment {
+  timestamp: number;           // seconds into the video when AI starts speaking
+  type: "strength" | "improvement" | "observation";
+  title: string;               // short label for the banner (max 5 words)
+  spokenScript: string;        // full natural spoken sentence(s)
+  subtitleChunks: SubtitleChunk[];  // word-synced subtitle phrases
   annotation?: {
-    x: number;              // 0-1 normalized x center
-    y: number;              // 0-1 normalized y center
-    w: number;              // 0-1 normalized width
-    h: number;              // 0-1 normalized height
+    x: number; y: number; w: number; h: number;
     label: string;
   };
+  audioDuration?: number;      // filled in later by voice service
+  audioPath?: string;          // filled in later by voice service
 }
 
 export interface AnalysisReport {
@@ -38,31 +47,33 @@ export interface AnalysisReport {
   summary: string;
   strengths: string[];
   improvements: string[];
-  critiquePoints: CritiquePoint[];
   videoDuration: number;
+  critiqueSegments: CritiqueSegment[];
+  // Legacy alias for backward compat
+  critiquePoints?: CritiqueSegment[];
 }
 
-/** Extract key frames from video at regular intervals */
+/** Extract evenly-spaced frames from the video for GPT-4o vision */
 function extractFrames(videoPath: string, tmpDir: string, maxFrames = 10): string[] {
   const framesDir = path.join(tmpDir, "frames");
   fs.mkdirSync(framesDir, { recursive: true });
 
   const durationOutput = execSync(
     `ffprobe -v error -show_entries format=duration -of csv=p=0 "${videoPath}"`,
-    { encoding: "utf8" }
+    { encoding: "utf8", env: { ...process.env, PYTHONHOME: undefined, PYTHONPATH: undefined } }
   ).trim();
   const duration = parseFloat(durationOutput) || 30;
 
-  const interval = Math.max(1, Math.floor(duration / maxFrames));
+  const interval = Math.max(1, duration / maxFrames);
   const framePaths: string[] = [];
 
   for (let i = 0; i < maxFrames; i++) {
-    const t = Math.min(i * interval, duration - 0.5);
-    const framePath = path.join(framesDir, `frame_${String(i).padStart(3, "0")}_t${Math.floor(t)}.jpg`);
+    const t = Math.min(i * interval, duration - 0.1);
+    const framePath = path.join(framesDir, `frame_${String(i).padStart(3, "0")}_t${t.toFixed(1)}.jpg`);
     try {
       execSync(
-        `ffmpeg -ss ${t} -i "${videoPath}" -vframes 1 -q:v 2 -vf "scale=640:-1" "${framePath}" -y 2>/dev/null`,
-        { encoding: "utf8" }
+        `ffmpeg -ss ${t.toFixed(2)} -i "${videoPath}" -vframes 1 -q:v 3 -vf "scale=640:-1" "${framePath}" -y 2>/dev/null`,
+        { encoding: "utf8", env: { ...process.env, PYTHONHOME: undefined, PYTHONPATH: undefined } }
       );
       if (fs.existsSync(framePath)) framePaths.push(framePath);
     } catch { /* skip failed frame */ }
@@ -72,34 +83,35 @@ function extractFrames(videoPath: string, tmpDir: string, maxFrames = 10): strin
 }
 
 function imageToBase64(filePath: string): string {
-  const data = fs.readFileSync(filePath);
-  return `data:image/jpeg;base64,${data.toString("base64")}`;
+  return `data:image/jpeg;base64,${fs.readFileSync(filePath).toString("base64")}`;
 }
 
 async function callGPT4oVision(frames: string[], videoDuration: number): Promise<AnalysisReport> {
   const frameMessages = frames.map((fp) => {
-    const tSec = parseInt(fp.match(/_t(\d+)\.jpg$/)?.[1] ?? "0");
+    const tMatch = fp.match(/_t([\d.]+)\.jpg$/);
+    const tSec = parseFloat(tMatch?.[1] ?? "0");
     return [
-      {
-        type: "text" as const,
-        text: `Frame at ${Math.floor(tSec / 60)}:${String(tSec % 60).padStart(2, "0")} (${tSec}s):`,
-      },
-      {
-        type: "image_url" as const,
-        image_url: { url: imageToBase64(fp), detail: "low" as const },
-      },
+      { type: "text" as const, text: `Frame at ${tSec.toFixed(1)}s:` },
+      { type: "image_url" as const, image_url: { url: imageToBase64(fp), detail: "low" as const } },
     ];
   }).flat();
 
-  const systemPrompt = `You are Alex, an elite marketing consultant and creative director with 20+ years of experience at top ad agencies. You are reviewing a client's marketing video ad in real-time, like a live creative review session. You are direct, warm, encouraging about strengths, and constructively honest about weaknesses. You speak like a real person — not a robot reading a report.
+  const systemPrompt = `You are Alex — a world-class marketing consultant and creative director with 20 years of experience. You are doing a LIVE screen-recording review of a client's marketing video ad, talking naturally as the video plays.
 
-Your job is to produce a JSON analysis that will be used to:
-1. Draw colored annotation circles on the video (green for strengths, red/orange for improvements)
-2. Apply zoom/pan camera effects to draw attention to specific elements
-3. Generate a spoken voiceover using ElevenLabs (your "spokenScript" field)
-4. Burn subtitles into the video (your "subtitleText" field)
+IMPORTANT: You are NOT pausing the video. You are NOT replaying clips. The video plays CONTINUOUSLY and you speak over it at specific moments. Think of it like a commentary track on a DVD — you talk while the video keeps rolling.
 
-Return ONLY valid JSON matching this exact schema:
+Your speech is natural, direct, human. You use real speech patterns:
+- "Okay so right here..."
+- "Watch what happens at this point..."
+- "Here's what I love about this..."
+- "And this is where they lose me..."
+- "Now look at the bottom of the screen..."
+- "See that? That's exactly what you want."
+- "This is the problem — nobody's going to..."
+
+You celebrate strengths ENTHUSIASTICALLY and address improvements CONSTRUCTIVELY.
+
+Return ONLY valid JSON with this exact schema:
 {
   "overallScore": <0-100>,
   "hookScore": <0-100>,
@@ -107,39 +119,39 @@ Return ONLY valid JSON matching this exact schema:
   "visualScore": <0-100>,
   "pacingScore": <0-100>,
   "emotionScore": <0-100>,
-  "summary": "<2-3 sentence executive summary in Alex's voice>",
+  "summary": "<2-3 sentence verdict in Alex's voice — direct, human, specific>",
   "strengths": ["<strength 1>", "<strength 2>", "<strength 3>"],
   "improvements": ["<improvement 1>", "<improvement 2>", "<improvement 3>"],
-  "critiquePoints": [
+  "videoDuration": ${videoDuration},
+  "critiqueSegments": [
     {
-      "timestamp": <seconds as number>,
-      "timecode": "<MM:SS>",
-      "type": "strength" | "improvement" | "warning",
-      "title": "<short 3-5 word label>",
-      "spokenScript": "<Alex speaking conversationally — 2-4 sentences. Use natural speech patterns: 'Okay so...', 'Here's the thing...', 'I love what they did here...', 'This is where it gets tricky...'. Reference what you actually SEE in the frame. Be specific and human.>",
-      "subtitleText": "<12 words max, punchy subtitle version of the key insight>",
-      "zoomEffect": "zoom_in" | "zoom_out" | "pan_left" | "pan_right" | "none",
+      "timestamp": <seconds when Alex starts speaking — must be >= 0 and < ${videoDuration}>,
+      "type": "strength" | "improvement" | "observation",
+      "title": "<max 5 words — shown in banner>",
+      "spokenScript": "<2-4 natural spoken sentences. Alex is reacting to what's on screen RIGHT NOW. Conversational, specific, human. No bullet points, no formal language.>",
+      "subtitleChunks": [
+        { "text": "<4-8 words matching exactly what Alex says>", "offsetSec": 0 },
+        { "text": "<next spoken phrase>", "offsetSec": <estimated seconds, ~2.5 words/sec> }
+      ],
       "annotation": {
-        "x": <0.0-1.0 normalized center x of the element>,
-        "y": <0.0-1.0 normalized center y of the element>,
-        "w": <0.0-1.0 normalized width — typically 0.2-0.5>,
-        "h": <0.0-1.0 normalized height — typically 0.15-0.4>,
-        "label": "<2-4 word annotation label>"
+        "x": <0.0-1.0 center x of element being discussed>,
+        "y": <0.0-1.0 center y>,
+        "w": <0.0-1.0 width, typically 0.2-0.5>,
+        "h": <0.0-1.0 height, typically 0.15-0.4>,
+        "label": "<2-3 word label>"
       }
     }
   ]
 }
 
-Rules for critiquePoints:
-- Generate 6-9 points spread across the video duration
-- Mix strengths AND improvements — don't just criticize. Celebrate what works!
-- For "strength" type: use zoom_in to highlight the good element, green circle
-- For "improvement" type: use zoom_in on the problem area, then zoom_out to show context
-- For "warning" type: use zoom_out to show the full picture
-- spokenScript must sound like Alex is REACTING in real time, not reading a report
-- subtitleText should be the single most important takeaway from that point (max 12 words)
-- Always annotate a specific visual element (button, face, text, logo, product)
-- Video duration is ${videoDuration} seconds`;
+RULES:
+- Generate 5–8 segments spread naturally across the video timeline
+- Segments must be in chronological order by timestamp
+- Space segments at least 2 seconds apart
+- Mix strengths AND improvements — don't just criticize
+- subtitleChunks: break spokenScript into natural spoken phrases of 4–8 words each. Estimate offsetSec based on ~2.5 words per second speech rate
+- annotation is REQUIRED for every segment — point at a specific visual element
+- Video duration is ${videoDuration.toFixed(1)} seconds`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120_000);
@@ -154,6 +166,7 @@ Rules for critiquePoints:
     body: JSON.stringify({
       model: "gpt-4o",
       max_tokens: 4000,
+      temperature: 0.7,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
@@ -162,7 +175,7 @@ Rules for critiquePoints:
           content: [
             {
               type: "text",
-              text: `Review this marketing video ad as Alex. The video is ${videoDuration} seconds long. I'm showing you ${frames.length} key frames. Give me your live creative review as JSON.`,
+              text: `Review this marketing video ad as Alex. The video is ${videoDuration.toFixed(1)} seconds long. Here are ${frames.length} frames from the video. Give me your live commentary critique as JSON.`,
             },
             ...frameMessages,
           ],
@@ -178,12 +191,35 @@ Rules for critiquePoints:
     throw new Error(`GPT-4o API error: ${response.status} ${err}`);
   }
 
-  const data = await response.json() as any;
+  const data = await response.json() as { choices: Array<{ message: { content: string } }> };
   const content = data.choices?.[0]?.message?.content;
   if (!content) throw new Error("Empty response from GPT-4o");
 
   const parsed = JSON.parse(content) as AnalysisReport;
   parsed.videoDuration = videoDuration;
+
+  // Normalize segments
+  if (!parsed.critiqueSegments && (parsed as unknown as { critiquePoints?: CritiqueSegment[] }).critiquePoints) {
+    parsed.critiqueSegments = (parsed as unknown as { critiquePoints: CritiqueSegment[] }).critiquePoints;
+  }
+  if (!Array.isArray(parsed.critiqueSegments)) {
+    parsed.critiqueSegments = [];
+  }
+
+  // Sort by timestamp and clamp
+  parsed.critiqueSegments = parsed.critiqueSegments
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map(seg => ({
+      ...seg,
+      timestamp: Math.max(0, Math.min(seg.timestamp, videoDuration - 1)),
+      subtitleChunks: Array.isArray(seg.subtitleChunks) && seg.subtitleChunks.length > 0
+        ? seg.subtitleChunks
+        : [{ text: seg.spokenScript.slice(0, 40), offsetSec: 0 }],
+    }));
+
+  // Also expose as critiquePoints for backward compat with pipeline.ts
+  parsed.critiquePoints = parsed.critiqueSegments;
+
   return parsed;
 }
 
@@ -193,14 +229,16 @@ export async function analyzeVideoFile(videoPath: string): Promise<AnalysisRepor
   try {
     const durationOutput = execSync(
       `ffprobe -v error -show_entries format=duration -of csv=p=0 "${videoPath}"`,
-      { encoding: "utf8" }
+      { encoding: "utf8", env: { ...process.env, PYTHONHOME: undefined, PYTHONPATH: undefined } }
     ).trim();
     const videoDuration = parseFloat(durationOutput) || 30;
 
     const frames = extractFrames(videoPath, tmpDir, 10);
     if (frames.length === 0) throw new Error("Could not extract frames from video");
 
+    console.log(`[GPT-4o] Analyzing ${frames.length} frames from ${videoDuration.toFixed(1)}s video`);
     const report = await callGPT4oVision(frames, videoDuration);
+    console.log(`[GPT-4o] Generated ${report.critiqueSegments.length} critique segments`);
     return report;
   } finally {
     try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }

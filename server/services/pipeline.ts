@@ -1,8 +1,8 @@
 /**
- * AdGuru AI — Main Pipeline Orchestrator
+ * AdGuru AI — Main Pipeline Orchestrator (v3)
  * Coordinates: Download → Analyze → Voice → Render → Upload
  */
-import { execSync, spawn } from "child_process";
+import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -26,7 +26,8 @@ export async function runCritiquePipeline(
 
     console.log(`[Pipeline ${critiqueId}] Starting GPT-4o analysis...`);
     const report = await analyzeVideoFile(videoPath);
-    console.log(`[Pipeline ${critiqueId}] Analysis complete. ${report.critiquePoints.length} critique points.`);
+    const segments = report.critiqueSegments ?? [];
+    console.log(`[Pipeline ${critiqueId}] Analysis complete. ${segments.length} critique segments.`);
 
     // ─── Step 2: Generate voiceovers ───────────────────────
     await updateCritique(critiqueId, {
@@ -35,12 +36,13 @@ export async function runCritiquePipeline(
     });
 
     const voiceDir = path.join(tmpDir, "voice");
-    const voiceSegments = await generateAllVoiceSegments(report.critiquePoints, voiceDir);
+    const voiceSegments = await generateAllVoiceSegments(segments, voiceDir);
 
-    // Attach audio paths to critique points for the renderer
-    const critiquePointsWithAudio = report.critiquePoints.map((pt, i) => ({
-      ...pt,
+    // Attach audio paths to segments for the renderer
+    const segmentsWithAudio = segments.map((seg, i) => ({
+      ...seg,
       audioPath: voiceSegments[i]?.audioPath ?? "",
+      audioDuration: voiceSegments[i]?.audioDuration ?? 0,
     }));
 
     // ─── Step 3: Render annotated video ────────────────────
@@ -52,14 +54,11 @@ export async function runCritiquePipeline(
     const critiqueJsonPath = path.join(tmpDir, "critique.json");
     fs.writeFileSync(
       critiqueJsonPath,
-      JSON.stringify({ ...report, critiquePoints: critiquePointsWithAudio }, null, 2)
+      JSON.stringify({ ...report, critiqueSegments: segmentsWithAudio }, null, 2)
     );
 
     const outputVideoPath = path.join(tmpDir, `critique_${critiqueId}.mp4`);
     const scriptPath = path.join(process.cwd(), "server/scripts/annotate_video.py");
-    // Use the shell wrapper to ensure PYTHONHOME/PYTHONPATH are unset before
-    // calling python3.11, preventing the uv Python 3.13 runtime from hijacking
-    // the stdlib lookup and causing SRE module mismatch errors.
     const wrapperPath = path.join(process.cwd(), "server/scripts/run_python.sh");
 
     await new Promise<void>((resolve, reject) => {
@@ -92,15 +91,16 @@ export async function runCritiquePipeline(
       processingStep: "Done!",
       critiqueVideoKey: key,
       critiqueVideoUrl: url,
-      reportJson: report as any,
+      reportJson: report as unknown as Record<string, unknown>,
     });
 
     console.log(`[Pipeline ${critiqueId}] Completed successfully!`);
-  } catch (err: any) {
-    console.error(`[Pipeline ${critiqueId}] Failed:`, err);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    console.error(`[Critique ${critiqueId}] Pipeline error:`, err);
     await updateCritique(critiqueId, {
       status: "failed",
-      errorMessage: err?.message ?? "Unknown error",
+      errorMessage: message,
       processingStep: "Processing failed",
     });
     throw err;

@@ -1,202 +1,166 @@
-#!/usr/bin/env python3.11
+#!/usr/bin/env python3
 """
-AdGuru AI — Enhanced Video Annotation Renderer v2
-Features:
-  - Original video audio mixed in (ducked under voiceover)
-  - Green circles for strengths, blue for improvements, orange for warnings
-  - Smooth zoom-in / zoom-out / pan camera effects (Ken Burns style)
-  - Animated slide-in type banners (STRENGTH / IMPROVE / WARNING)
-  - Burned-in subtitles (white text, black outline, bottom-center)
-  - Voiceover audio synced per critique point (video pauses while guru speaks)
+AdGuru AI — Video Annotation Renderer (v3 — Natural Consultant Feel)
+
+Design principles:
+- Video plays CONTINUOUSLY — never replays, never freezes
+- Original audio is MUTED (volume=0) while AI voiceover is playing,
+  with smooth 0.3s fade out/in at boundaries
+- NO zoom/pan effects — clean, stable playback
+- Annotation circles fade in/out naturally over the live video
+- Subtitles are LARGE, BOLD, PROMINENT — white text on dark pill background,
+  matching exactly what the AI is saying (word-synced chunks)
+- Banner slides in at the start of each segment
+
+Usage:
+    python3 annotate_video.py <input_video> <critique_json> <output_video>
 """
 
 import sys
 import json
 import os
-import math
 import subprocess
 import tempfile
 import shutil
+import math
 
-import cv2
-import numpy as np
+try:
+    import cv2
+    import numpy as np
+except ImportError as e:
+    print(f"[ERROR] Missing dependency: {e}", file=sys.stderr)
+    sys.exit(1)
+
+# ── Constants ─────────────────────────────────────────────────────────────────
+FONT = cv2.FONT_HERSHEY_DUPLEX
+CIRCLE_FADE_SECS = 0.4
+BANNER_SLIDE_SECS = 0.5
+SUBTITLE_FADE_SECS = 0.25
+AUDIO_FADE_SECS = 0.3
+
+COLOR_GREEN  = (60, 200, 80)
+COLOR_RED    = (60, 60, 220)
+COLOR_ORANGE = (30, 140, 255)
+COLOR_WHITE  = (255, 255, 255)
 
 
-# ─── Easing ───────────────────────────────────────────────────────────────────
+# ── Easing ────────────────────────────────────────────────────────────────────
 
-def ease_in_out(t):
+def ease(t):
     t = max(0.0, min(1.0, t))
     return t * t * (3.0 - 2.0 * t)
 
-def lerp(a, b, t):
-    return a + (b - a) * t
+
+# ── Drawing helpers ───────────────────────────────────────────────────────────
+
+def draw_rounded_rect_alpha(img, x1, y1, x2, y2, radius, color, alpha):
+    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+    radius = max(0, min(radius, (x2 - x1) // 2, (y2 - y1) // 2))
+    overlay = img.copy()
+    cv2.rectangle(overlay, (x1 + radius, y1), (x2 - radius, y2), color, -1)
+    cv2.rectangle(overlay, (x1, y1 + radius), (x2, y2 - radius), color, -1)
+    for cx, cy in [(x1+radius, y1+radius), (x2-radius, y1+radius),
+                   (x1+radius, y2-radius), (x2-radius, y2-radius)]:
+        cv2.circle(overlay, (cx, cy), radius, color, -1)
+    cv2.addWeighted(overlay, alpha, img, 1.0 - alpha, 0, img)
 
 
-# ─── Video info ───────────────────────────────────────────────────────────────
-
-def get_video_info(path):
-    cap = cv2.VideoCapture(path)
-    fps   = cap.get(cv2.CAP_PROP_FPS) or 25.0
-    w     = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    h     = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    cap.release()
-    return fps, w, h, total
-
-
-# ─── Drawing ──────────────────────────────────────────────────────────────────
-
-def draw_annotation_circle(frame, ann, color, progress=1.0):
-    """Animated growing circle with glow and label."""
+def draw_annotation_circle(frame, ann, color, alpha):
+    if alpha <= 0 or not ann:
+        return
     h, w = frame.shape[:2]
     cx = int(ann["x"] * w)
     cy = int(ann["y"] * h)
-    rx = max(20, int(ann["w"] * w / 2))
-    ry = max(20, int(ann["h"] * h / 2))
-    base_r = max(rx, ry)
-    r = int(base_r * ease_in_out(progress))
-    if r < 5:
-        return frame
+    rx = max(25, int(ann.get("w", 0.2) * w * 0.5))
+    ry = max(25, int(ann.get("h", 0.2) * h * 0.5))
+    r = min(max(rx, ry), 130)
 
-    # Semi-transparent fill
     overlay = frame.copy()
-    cv2.circle(overlay, (cx, cy), r, color, -1)
-    frame = cv2.addWeighted(overlay, 0.15, frame, 0.85, 0)
+    # Glow rings
+    cv2.circle(overlay, (cx, cy), r + 8, color, 2)
+    cv2.circle(overlay, (cx, cy), r + 4, color, 2)
+    cv2.addWeighted(overlay, alpha * 0.35, frame, 1 - alpha * 0.35, 0, frame)
 
-    # Outer glow rings
-    for gr, ga in [(r + 10, 0.12), (r + 5, 0.20)]:
-        ov2 = frame.copy()
-        cv2.circle(ov2, (cx, cy), gr, color, 2)
-        frame = cv2.addWeighted(ov2, ga, frame, 1 - ga, 0)
+    overlay2 = frame.copy()
+    cv2.circle(overlay2, (cx, cy), r, color, 3)
+    cv2.circle(overlay2, (cx, cy), 6, color, -1)
+    cv2.addWeighted(overlay2, alpha, frame, 1 - alpha, 0, frame)
 
-    # Main border
-    cv2.circle(frame, (cx, cy), r, color, 3)
-
-    # Label pill above circle
     label = ann.get("label", "")
-    if label and r > 20:
-        font = cv2.FONT_HERSHEY_DUPLEX
-        fs = 0.55
-        (tw, th), _ = cv2.getTextSize(label, font, fs, 1)
-        tx = cx - tw // 2
-        ty = cy - r - 14
-        pad = 6
-        cv2.rectangle(frame, (tx - pad, ty - th - pad), (tx + tw + pad, ty + pad), color, -1)
-        cv2.putText(frame, label, (tx, ty), font, fs, (255, 255, 255), 1, cv2.LINE_AA)
-
-    return frame
+    if label and alpha > 0.4:
+        fs = 0.6
+        (tw, th), _ = cv2.getTextSize(label, FONT, fs, 1)
+        lx = cx - tw // 2
+        ly = cy - r - 16
+        draw_rounded_rect_alpha(frame, lx - 8, ly - th - 6, lx + tw + 8, ly + 6, 6, color, alpha * 0.9)
+        cv2.putText(frame, label, (lx, ly), FONT, fs, COLOR_WHITE, 1, cv2.LINE_AA)
 
 
-def draw_type_banner(frame, point_type, title, progress=1.0):
-    """Slide-in banner at the top: STRENGTH / IMPROVE / WARNING."""
+def draw_banner(frame, title, seg_type, progress):
+    if progress <= 0:
+        return
+    h, w = frame.shape[:2]
+    color = COLOR_GREEN if seg_type == "strength" else (COLOR_RED if seg_type == "improvement" else COLOR_ORANGE)
+    icon = "✓ STRENGTH" if seg_type == "strength" else ("✗ IMPROVE" if seg_type == "improvement" else "● NOTE")
+    text = f"  {icon}  —  {title[:38].upper()}"
+
+    fs = 0.78
+    (tw, th), _ = cv2.getTextSize(text, FONT, fs, 2)
+    banner_h = th + 28
+    banner_w = min(tw + 60, w - 40)
+
+    slide = ease(min(progress / BANNER_SLIDE_SECS, 1.0))
+    bx = int(20 - (1 - slide) * (banner_w + 30))
+    by = 18
+    alpha = min(progress / BANNER_SLIDE_SECS, 1.0) * 0.93
+
+    draw_rounded_rect_alpha(frame, bx, by, bx + banner_w, by + banner_h, 10, color, alpha)
+    cv2.putText(frame, text, (bx + 14, by + th + 10), FONT, fs, COLOR_WHITE, 2, cv2.LINE_AA)
+
+
+def draw_subtitle(frame, text, alpha):
+    if not text or alpha <= 0:
+        return
     h, w = frame.shape[:2]
 
-    if point_type == "strength":
-        bg = (34, 139, 34)
-        icon = "+ STRENGTH"
-    elif point_type == "improvement":
-        bg = (30, 30, 180)
-        icon = "! IMPROVE"
-    else:
-        bg = (20, 100, 200)
-        icon = "~ WARNING"
-
-    slide = ease_in_out(min(progress * 2.5, 1.0))
-    off_x = int(lerp(-w, 0, slide))
-
-    banner_h = 50
-    overlay = frame.copy()
-    cv2.rectangle(overlay, (off_x, 0), (off_x + w, banner_h), bg, -1)
-    frame = cv2.addWeighted(overlay, 0.85, frame, 0.15, 0)
-
-    font = cv2.FONT_HERSHEY_DUPLEX
-    cv2.putText(frame, icon, (off_x + 14, 33), font, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
-
-    title_short = title[:42]
-    (tw, _), _ = cv2.getTextSize(title_short, font, 0.6, 1)
-    cv2.putText(frame, title_short, (off_x + w - tw - 18, 33),
-                font, 0.6, (220, 220, 220), 1, cv2.LINE_AA)
-    return frame
-
-
-def draw_subtitle(frame, text, progress=1.0):
-    """Burn subtitle at the bottom with fade-in."""
-    if not text:
-        return frame
-    h, w = frame.shape[:2]
-    font = cv2.FONT_HERSHEY_DUPLEX
-    fs = 0.70
-    thick = 2
-
-    # Word-wrap ~48 chars
+    # Word-wrap
     words = text.split()
-    lines, cur = [], ""
+    lines = []
+    cur = ""
     for word in words:
-        if len(cur) + len(word) + 1 <= 48:
-            cur = (cur + " " + word).strip()
-        else:
+        test = (cur + " " + word).strip()
+        (tw, _), _ = cv2.getTextSize(test, FONT, 1.15, 2)
+        if tw > w - 100:
             if cur:
                 lines.append(cur)
             cur = word
+        else:
+            cur = test
     if cur:
         lines.append(cur)
 
-    alpha = ease_in_out(min(progress * 3.0, 1.0))
-    line_h = 38
-    total_h = len(lines) * line_h
-    start_y = h - 55 - total_h
+    line_h = 52
+    base_y = h - 55
 
     for i, line in enumerate(lines):
-        (tw, th), _ = cv2.getTextSize(line, font, fs, thick)
-        tx = (w - tw) // 2
-        ty = start_y + i * line_h + th
-        for dx, dy in [(-2,-2),(2,-2),(-2,2),(2,2),(0,-2),(0,2),(-2,0),(2,0)]:
-            cv2.putText(frame, line, (tx+dx, ty+dy), font, fs, (0,0,0), thick+1, cv2.LINE_AA)
-        ov = frame.copy()
-        cv2.putText(ov, line, (tx, ty), font, fs, (255,255,255), thick, cv2.LINE_AA)
-        frame = cv2.addWeighted(ov, alpha, frame, 1.0 - alpha, 0)
-    return frame
+        (tw, th), _ = cv2.getTextSize(line, FONT, 1.15, 2)
+        lx = (w - tw) // 2
+        ly = base_y - (len(lines) - 1 - i) * line_h
+
+        # Dark pill background
+        pad_x, pad_y = 22, 12
+        draw_rounded_rect_alpha(frame,
+                                lx - pad_x, ly - th - pad_y,
+                                lx + tw + pad_x, ly + pad_y,
+                                12, (8, 8, 8), alpha * 0.85)
+
+        # Shadow
+        cv2.putText(frame, line, (lx + 2, ly + 2), FONT, 1.15, (0, 0, 0), 3, cv2.LINE_AA)
+        # Main text
+        cv2.putText(frame, line, (lx, ly), FONT, 1.15, COLOR_WHITE, 2, cv2.LINE_AA)
 
 
-# ─── Zoom / Pan ───────────────────────────────────────────────────────────────
-
-def apply_zoom_effect(frame, effect, progress, ann=None):
-    if not effect or effect == "none":
-        return frame
-    h, w = frame.shape[:2]
-    t = ease_in_out(progress)
-
-    if effect == "zoom_in":
-        cx_n = ann["x"] if ann else 0.5
-        cy_n = ann["y"] if ann else 0.5
-        scale = lerp(1.0, 1.38, t)
-        cx_px, cy_px = cx_n * w, cy_n * h
-        nw, nh = int(w / scale), int(h / scale)
-        x1 = int(max(0, min(cx_px - nw / 2, w - nw)))
-        y1 = int(max(0, min(cy_px - nh / 2, h - nh)))
-        return cv2.resize(frame[y1:y1+nh, x1:x1+nw], (w, h), interpolation=cv2.INTER_LINEAR)
-
-    elif effect == "zoom_out":
-        scale = lerp(1.38, 1.0, t)
-        nw, nh = int(w / scale), int(h / scale)
-        x1 = (w - nw) // 2
-        y1 = (h - nh) // 2
-        return cv2.resize(frame[y1:y1+nh, x1:x1+nw], (w, h), interpolation=cv2.INTER_LINEAR)
-
-    elif effect == "pan_left":
-        off = int(lerp(0, w * 0.10, t))
-        M = np.float32([[1, 0, -off], [0, 1, 0]])
-        return cv2.warpAffine(frame, M, (w, h))
-
-    elif effect == "pan_right":
-        off = int(lerp(0, w * 0.10, t))
-        M = np.float32([[1, 0, off], [0, 1, 0]])
-        return cv2.warpAffine(frame, M, (w, h))
-
-    return frame
-
-
-# ─── Audio helpers ────────────────────────────────────────────────────────────
+# ── Audio builder ─────────────────────────────────────────────────────────────
 
 def ffprobe_duration(path):
     try:
@@ -210,235 +174,271 @@ def ffprobe_duration(path):
         return 0.0
 
 
-def extract_audio_segment(video_path, start, dur, out_wav):
-    subprocess.run([
-        "ffmpeg", "-y", "-ss", str(start), "-i", video_path,
-        "-t", str(max(dur, 0.1)), "-vn",
-        "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", out_wav
-    ], capture_output=True, timeout=30)
+def build_audio_track(video_path, segments, total_duration, tmp_dir):
+    """
+    Build the final audio track:
+    - Original audio plays throughout at full volume
+    - Original audio fades to 0 during each voiceover window
+    - AI voiceover is placed at the correct timestamp
+    - Smooth 0.3s crossfade at boundaries
+    """
+    orig_audio = os.path.join(tmp_dir, "orig_audio.wav")
+    r = subprocess.run(
+        ["ffmpeg", "-y", "-i", video_path, "-vn",
+         "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", orig_audio],
+        capture_output=True, timeout=60
+    )
+    has_orig = r.returncode == 0 and os.path.exists(orig_audio) and os.path.getsize(orig_audio) > 1000
+
+    voice_segs = [s for s in segments if s.get("audioPath") and os.path.exists(s.get("audioPath", ""))]
+
+    if not voice_segs and not has_orig:
+        return ""
+
+    if not voice_segs:
+        return orig_audio
+
+    # Build filter_complex
+    # Input 0: original video (for audio)
+    # Inputs 1..N: voiceover segments
+    inputs = ["-i", video_path]
+    for seg in voice_segs:
+        inputs += ["-i", seg["audioPath"]]
+
+    fd = AUDIO_FADE_SECS
+    # Build volume expression for original audio: 1 outside voiceover windows, 0 inside
+    # Use piecewise: for each window [t0, t1], fade out [t0-fd, t0], silence [t0, t1], fade in [t1, t1+fd]
+    mute_windows = []
+    for seg in voice_segs:
+        t0 = seg.get("timestamp", 0)
+        adur = seg.get("audioDuration") or ffprobe_duration(seg["audioPath"]) or 3.0
+        t1 = t0 + adur
+        mute_windows.append((max(0, t0 - fd), t0, t1, t1 + fd))
+
+    # Volume expression: starts at 1, goes to 0 during each window
+    # vol = 1 - clamp(sum of muting contributions)
+    if mute_windows:
+        parts = []
+        for (fade_out_start, t0, t1, fade_in_end) in mute_windows:
+            # Fade out: linear from 1→0 over [fade_out_start, t0]
+            fade_out_dur = max(t0 - fade_out_start, 0.001)
+            # Silence: 0 during [t0, t1]
+            # Fade in: linear from 0→1 over [t1, fade_in_end]
+            fade_in_dur = max(fade_in_end - t1, 0.001)
+            parts.append(
+                f"between(t,{fade_out_start:.3f},{t0:.3f})*((t-{fade_out_start:.3f})/{fade_out_dur:.3f})+"
+                f"between(t,{t0:.3f},{t1:.3f})*1+"
+                f"between(t,{t1:.3f},{fade_in_end:.3f})*((1-(t-{t1:.3f})/{fade_in_dur:.3f}))"
+            )
+        mute_expr = "+".join(f"({p})" for p in parts)
+        vol_expr = f"max(0,1-({mute_expr}))"
+        orig_filter = f"[0:a]volume='{vol_expr}':eval=frame[orig_vol]"
+    else:
+        orig_filter = "[0:a]volume=1[orig_vol]"
+
+    filter_parts = [orig_filter]
+    mix_labels = ["[orig_vol]"]
+
+    for i, seg in enumerate(voice_segs):
+        delay_ms = int(seg.get("timestamp", 0) * 1000)
+        filter_parts.append(f"[{i+1}:a]adelay={delay_ms}|{delay_ms}[v{i}]")
+        mix_labels.append(f"[v{i}]")
+
+    n = len(mix_labels)
+    filter_parts.append(f"{''.join(mix_labels)}amix=inputs={n}:duration=longest:normalize=0[aout]")
+    filter_complex = ";".join(filter_parts)
+
+    mixed_audio = os.path.join(tmp_dir, "mixed_audio.wav")
+    cmd = (["ffmpeg", "-y"] + inputs +
+           ["-filter_complex", filter_complex,
+            "-map", "[aout]",
+            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2",
+            "-t", str(total_duration),
+            mixed_audio])
+
+    r2 = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if r2.returncode != 0:
+        print(f"[Audio] Mix failed: {r2.stderr[-400:]}", file=sys.stderr)
+        return orig_audio if has_orig else ""
+
+    return mixed_audio
 
 
-def create_silence(dur, out_wav):
-    subprocess.run([
-        "ffmpeg", "-y", "-f", "lavfi",
-        "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
-        "-t", str(max(dur, 0.1)),
-        "-acodec", "pcm_s16le", out_wav
-    ], capture_output=True, timeout=10)
+# ── Main renderer ─────────────────────────────────────────────────────────────
 
-
-def mix_duck(orig_wav, voice_mp3, out_wav, duck=0.15):
-    """Mix original audio (ducked) under voiceover."""
-    r = subprocess.run([
-        "ffmpeg", "-y", "-i", orig_wav, "-i", voice_mp3,
-        "-filter_complex",
-        f"[0:a]volume={duck}[d];[d][1:a]amix=inputs=2:duration=longest[o]",
-        "-map", "[o]", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", out_wav
-    ], capture_output=True, timeout=30)
-    return r.returncode == 0
-
-
-def concat_wavs(wav_list, out_wav):
-    if not wav_list:
-        create_silence(1.0, out_wav)
-        return
-    if len(wav_list) == 1:
-        shutil.copy(wav_list[0], out_wav)
-        return
-    lst = out_wav + ".list.txt"
-    with open(lst, "w") as f:
-        for p in wav_list:
-            f.write(f"file '{p}'\n")
-    subprocess.run([
-        "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-        "-i", lst, "-c", "copy", out_wav
-    ], capture_output=True, timeout=60)
-    try:
-        os.remove(lst)
-    except Exception:
-        pass
-
-
-# ─── Main renderer ────────────────────────────────────────────────────────────
-
-def render(video_path, critique_json_path, output_path):
-    with open(critique_json_path) as f:
+def render(input_video, critique_json, output_video):
+    with open(critique_json) as f:
         data = json.load(f)
 
-    points = sorted(data.get("critiquePoints", []), key=lambda p: p.get("timestamp", 0))
-    fps, W, H, total_frames = get_video_info(video_path)
-    fps = max(fps, 24.0)
-    video_dur = total_frames / fps
+    # Support both critiqueSegments (v3) and critiquePoints (legacy)
+    segments = data.get("critiqueSegments") or data.get("critiquePoints") or []
+    segments = sorted(segments, key=lambda s: s.get("timestamp", 0))
 
-    print(f"[Render] Video: {W}x{H} @ {fps:.1f}fps, {video_dur:.1f}s", flush=True)
-    print(f"[Render] {len(points)} critique points", flush=True)
+    cap = cv2.VideoCapture(input_video)
+    if not cap.isOpened():
+        print(f"[ERROR] Cannot open: {input_video}", file=sys.stderr)
+        sys.exit(1)
 
-    tmp = tempfile.mkdtemp(prefix="adguru_")
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    total_duration = total_frames / fps
+
+    print(f"[Renderer] {w}x{h} @ {fps:.1f}fps, {total_duration:.1f}s, {len(segments)} segments")
+
+    tmp_dir = tempfile.mkdtemp(prefix="adguru_v3_")
+    raw_video = os.path.join(tmp_dir, "raw.mp4")
 
     try:
-        cap = cv2.VideoCapture(video_path)
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        raw_mp4 = os.path.join(tmp, "raw.mp4")
-        writer = cv2.VideoWriter(raw_mp4, fourcc, fps, (W, H))
+        out = cv2.VideoWriter(raw_video, fourcc, fps, (w, h))
 
-        # Build event timeline
-        events = []
-        prev = 0
-        for idx, pt in enumerate(points):
-            trig = int(pt.get("timestamp", 0) * fps)
-            trig = max(prev, min(trig, total_frames - 1))
+        # Pre-compute segment timing
+        seg_info = []
+        for seg in segments:
+            t_start = float(seg.get("timestamp", 0))
+            adur = seg.get("audioDuration") or 0
+            if adur <= 0:
+                ap = seg.get("audioPath", "")
+                adur = ffprobe_duration(ap) if ap and os.path.exists(ap) else 0
+            if adur <= 0:
+                words = len(seg.get("spokenScript", "").split())
+                adur = max(2.5, words / 2.5)
+            t_end = t_start + adur
 
-            if trig > prev:
-                events.append({"kind": "play", "f0": prev, "f1": trig})
+            # Build subtitle schedule
+            chunks = seg.get("subtitleChunks") or []
+            if not chunks:
+                script = seg.get("spokenScript") or seg.get("subtitleText") or ""
+                chunks = [{"text": script[:60], "offsetSec": 0}]
 
-            ap = pt.get("audioPath", "")
-            adur = ffprobe_duration(ap) if ap and os.path.exists(ap) else 3.0
-            freeze_n = max(int(adur * fps), int(fps * 2))
-            events.append({
-                "kind": "critique",
-                "f0": trig,
-                "f1": trig + freeze_n,
-                "pt": pt,
-                "adur": adur,
-                "idx": idx,
-            })
-            prev = trig
-
-        if prev < total_frames:
-            events.append({"kind": "play", "f0": prev, "f1": total_frames})
-
-        # ── Render frames ──────────────────────────────────────────────────────
-        frame_buf = {}
-
-        def read_frame(fi):
-            fi = max(0, min(fi, total_frames - 1))
-            if fi not in frame_buf:
-                cap.set(cv2.CAP_PROP_POS_FRAMES, fi)
-                ok, fr = cap.read()
-                if not ok:
-                    fr = np.zeros((H, W, 3), dtype=np.uint8)
-                if len(frame_buf) > 80:
-                    del frame_buf[min(frame_buf)]
-                frame_buf[fi] = fr
-            return frame_buf[fi].copy()
-
-        written = 0
-        for ev in events:
-            if ev["kind"] == "play":
-                for fi in range(ev["f0"], ev["f1"]):
-                    writer.write(read_frame(fi))
-                    written += 1
-            else:
-                pt = ev["pt"]
-                base = read_frame(ev["f0"])
-                n = ev["f1"] - ev["f0"]
-                ann = pt.get("annotation")
-                ptype = pt.get("type", "improvement")
-                zoom = pt.get("zoomEffect", "none")
-                sub = pt.get("subtitleText", pt.get("description", ""))
-                title = pt.get("title", "")
-
-                if ptype == "strength":
-                    color = (50, 205, 50)   # Green
-                elif ptype == "improvement":
-                    color = (50, 50, 220)   # Red
+            sub_schedule = []
+            for j, chunk in enumerate(chunks):
+                c_start = t_start + float(chunk.get("offsetSec", 0))
+                if j + 1 < len(chunks):
+                    c_end = t_start + float(chunks[j+1].get("offsetSec", chunk.get("offsetSec", 0) + 3))
                 else:
-                    color = (30, 165, 255)  # Orange
+                    c_end = t_end + 0.5
+                sub_schedule.append({"text": chunk.get("text", ""), "start": c_start, "end": c_end})
 
-                for i in range(n):
-                    prog = i / max(n - 1, 1)
-                    fr = base.copy()
-                    fr = apply_zoom_effect(fr, zoom, prog, ann)
-                    fr = draw_type_banner(fr, ptype, title, prog)
-                    if ann:
-                        fr = draw_annotation_circle(fr, ann, color, progress=prog)
-                    if sub:
-                        fr = draw_subtitle(fr, sub, prog)
-                    writer.write(fr)
-                    written += 1
+            seg_info.append({
+                "t_start": t_start,
+                "t_end": t_end,
+                "type": seg.get("type", "observation"),
+                "title": seg.get("title", ""),
+                "annotation": seg.get("annotation"),
+                "sub_schedule": sub_schedule,
+                "audioPath": seg.get("audioPath", ""),
+                "audioDuration": adur,
+            })
+
+        # ── Frame loop ─────────────────────────────────────────────────────────
+        frame_idx = 0
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            t = frame_idx / fps
+
+            for si in seg_info:
+                t_start = si["t_start"]
+                t_end = si["t_end"]
+                seg_type = si["type"]
+                ann = si["annotation"]
+                is_active = t_start <= t <= t_end
+
+                if not is_active:
+                    continue
+
+                elapsed = t - t_start
+                remaining = t_end - t
+
+                # ── Annotation circle ──────────────────────────────────────────
+                if ann:
+                    if elapsed < CIRCLE_FADE_SECS:
+                        circle_alpha = ease(elapsed / CIRCLE_FADE_SECS)
+                    elif remaining < CIRCLE_FADE_SECS:
+                        circle_alpha = ease(remaining / CIRCLE_FADE_SECS)
+                    else:
+                        circle_alpha = 1.0
+                    color = COLOR_GREEN if seg_type == "strength" else (COLOR_RED if seg_type == "improvement" else COLOR_ORANGE)
+                    draw_annotation_circle(frame, ann, color, circle_alpha)
+
+                # ── Banner ─────────────────────────────────────────────────────
+                banner_show = 2.5  # seconds to show banner
+                if elapsed < banner_show + BANNER_SLIDE_SECS:
+                    draw_banner(frame, si["title"], seg_type, min(elapsed, banner_show))
+
+                # ── Subtitles ──────────────────────────────────────────────────
+                for sub in si["sub_schedule"]:
+                    if sub["start"] <= t <= sub["end"]:
+                        sub_elapsed = t - sub["start"]
+                        sub_remaining = sub["end"] - t
+                        if sub_elapsed < SUBTITLE_FADE_SECS:
+                            sub_alpha = ease(sub_elapsed / SUBTITLE_FADE_SECS)
+                        elif sub_remaining < SUBTITLE_FADE_SECS:
+                            sub_alpha = ease(sub_remaining / SUBTITLE_FADE_SECS)
+                        else:
+                            sub_alpha = 1.0
+                        draw_subtitle(frame, sub["text"], sub_alpha)
+                        break
+
+            out.write(frame)
+            frame_idx += 1
+
+            if frame_idx % int(fps * 5) == 0:
+                pct = 100 * t / max(total_duration, 1)
+                print(f"[Renderer] {t:.1f}s / {total_duration:.1f}s ({pct:.0f}%)")
 
         cap.release()
-        writer.release()
-        print(f"[Render] Wrote {written} frames ({written/fps:.1f}s)", flush=True)
+        out.release()
+        print(f"[Renderer] Frames written: {frame_idx}")
 
-        # ── Build audio track ──────────────────────────────────────────────────
-        audio_segs = []
-        for si, ev in enumerate(events):
-            seg_wav = os.path.join(tmp, f"a{si}.wav")
-            if ev["kind"] == "play":
-                dur = (ev["f1"] - ev["f0"]) / fps
-                extract_audio_segment(video_path, ev["f0"] / fps, dur, seg_wav)
-                if not os.path.exists(seg_wav):
-                    create_silence(dur, seg_wav)
-                audio_segs.append(seg_wav)
-            else:
-                pt = ev["pt"]
-                ap = pt.get("audioPath", "")
-                freeze_dur = (ev["f1"] - ev["f0"]) / fps
-                orig_wav = os.path.join(tmp, f"orig{si}.wav")
-                extract_audio_segment(video_path, ev["f0"] / fps, freeze_dur, orig_wav)
+        # ── Build audio ────────────────────────────────────────────────────────
+        print("[Renderer] Building audio track (mute during voiceover)...")
+        mixed_audio = build_audio_track(input_video, seg_info, total_duration, tmp_dir)
 
-                if ap and os.path.exists(ap):
-                    mixed = os.path.join(tmp, f"mix{si}.wav")
-                    if os.path.exists(orig_wav):
-                        ok = mix_duck(orig_wav, ap, mixed)
-                        audio_segs.append(mixed if ok and os.path.exists(mixed) else orig_wav)
-                    else:
-                        # Pad voiceover to freeze duration
-                        padded = os.path.join(tmp, f"pad{si}.wav")
-                        subprocess.run([
-                            "ffmpeg", "-y", "-i", ap,
-                            "-af", f"apad=whole_dur={freeze_dur}",
-                            "-t", str(freeze_dur),
-                            "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", padded
-                        ], capture_output=True, timeout=15)
-                        audio_segs.append(padded if os.path.exists(padded) else ap)
-                else:
-                    if os.path.exists(orig_wav):
-                        audio_segs.append(orig_wav)
-                    else:
-                        sil = os.path.join(tmp, f"sil{si}.wav")
-                        create_silence(freeze_dur, sil)
-                        audio_segs.append(sil)
+        # ── Merge ──────────────────────────────────────────────────────────────
+        print("[Renderer] Merging video + audio...")
+        if mixed_audio and os.path.exists(mixed_audio) and os.path.getsize(mixed_audio) > 1000:
+            merge_cmd = [
+                "ffmpeg", "-y",
+                "-i", raw_video, "-i", mixed_audio,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest", output_video
+            ]
+        else:
+            merge_cmd = [
+                "ffmpeg", "-y", "-i", raw_video,
+                "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+                "-an", output_video
+            ]
 
-        final_wav = os.path.join(tmp, "final.wav")
-        concat_wavs([s for s in audio_segs if os.path.exists(s)], final_wav)
-
-        # ── Mux ───────────────────────────────────────────────────────────────
-        print("[Render] Muxing...", flush=True)
-        r = subprocess.run([
-            "ffmpeg", "-y",
-            "-i", raw_mp4,
-            "-i", final_wav,
-            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
-            "-c:a", "aac", "-b:a", "192k",
-            "-shortest", output_path
-        ], capture_output=True, text=True, timeout=300)
-
+        r = subprocess.run(merge_cmd, capture_output=True, text=True, timeout=300)
         if r.returncode != 0:
-            print(f"[Render] FFmpeg mux error:\n{r.stderr[-800:]}", file=sys.stderr)
-            raise RuntimeError(f"FFmpeg mux failed (code {r.returncode})")
+            print(f"[Renderer] Merge error: {r.stderr[-400:]}", file=sys.stderr)
+            sys.exit(1)
 
-        print(f"[Render] Done! Output: {output_path}", flush=True)
+        size = os.path.getsize(output_video)
+        print(f"[Renderer] Done! {output_video} ({size:,} bytes)")
 
     finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
-
-# ─── Entry point ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if len(sys.argv) < 4:
-        print("Usage: annotate_video.py <video> <critique.json> <output.mp4>", file=sys.stderr)
+    if len(sys.argv) != 4:
+        print("Usage: annotate_video.py <input_video> <critique_json> <output_video>", file=sys.stderr)
         sys.exit(1)
 
-    vp, cj, op = sys.argv[1], sys.argv[2], sys.argv[3]
+    input_v, critique_j, output_v = sys.argv[1], sys.argv[2], sys.argv[3]
 
-    if not os.path.exists(vp):
-        print(f"Error: video not found: {vp}", file=sys.stderr)
-        sys.exit(1)
-    if not os.path.exists(cj):
-        print(f"Error: critique JSON not found: {cj}", file=sys.stderr)
-        sys.exit(1)
+    for p in [input_v, critique_j]:
+        if not os.path.exists(p):
+            print(f"[ERROR] Not found: {p}", file=sys.stderr)
+            sys.exit(1)
 
-    render(vp, cj, op)
+    render(input_v, critique_j, output_v)
