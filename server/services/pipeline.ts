@@ -59,7 +59,7 @@ export async function runCritiquePipeline(
     const scriptPath = path.join(process.cwd(), "server/scripts/annotate_video.py");
 
     await new Promise<void>((resolve, reject) => {
-      const proc = spawn("python3", [scriptPath, videoPath, critiqueJsonPath, outputVideoPath], {
+      const proc = spawn("python3.11", [scriptPath, videoPath, critiqueJsonPath, outputVideoPath], {
         stdio: ["ignore", "pipe", "pipe"],
       });
       proc.stdout.on("data", (d) => console.log(`[Renderer] ${d.toString().trim()}`));
