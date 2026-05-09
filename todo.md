@@ -36,10 +36,10 @@
 - [x] Save checkpoint
 
 ## Phase 5: Critique Video Enhancements
-- [ ] Mix original video audio (ducked under voiceover) into critique video output
-- [ ] Add good/bad point distinction: green circle + "✓ STRENGTH" label for positives, red circle + "✗ IMPROVE" for negatives
-- [ ] Add zoom-in/zoom-out camera effects on annotated regions (smooth Ken Burns style)
-- [ ] Add animated overlay banners (slide-in score card, section title cards)
-- [ ] Burn subtitles into the critique video (white text, black outline, bottom-center)
-- [ ] Upgrade GPT-4o prompt: output conversational/interactive script (not formal), include zoom direction, subtitle text per point
-- [ ] Upgrade ElevenLabs: use stability/similarity settings for more expressive, natural delivery
+- [x] Mix original video audio (ducked under voiceover) into critique video output
+- [x] Add good/bad point distinction: green circle + "✓ STRENGTH" label for positives, red circle + "✗ IMPROVE" for negatives
+- [x] Add zoom-in/zoom-out camera effects on annotated regions (smooth Ken Burns style)
+- [x] Add animated overlay banners (slide-in score card, section title cards)
+- [x] Burn subtitles into the critique video (white text, black outline, bottom-center)
+- [x] Upgrade GPT-4o prompt: output conversational/interactive script (not formal), include zoom direction, subtitle text per point
+- [x] Upgrade ElevenLabs: use stability/similarity settings for more expressive, natural delivery

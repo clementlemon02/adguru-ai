@@ -93,13 +93,13 @@ def draw_type_banner(frame, point_type, title, progress=1.0):
 
     if point_type == "strength":
         bg = (34, 139, 34)
-        icon = "  STRENGTH"
+        icon = "+ STRENGTH"
     elif point_type == "improvement":
-        bg = (180, 80, 20)
-        icon = "  IMPROVE"
+        bg = (30, 30, 180)
+        icon = "! IMPROVE"
     else:
-        bg = (30, 100, 200)
-        icon = "  WARNING"
+        bg = (20, 100, 200)
+        icon = "~ WARNING"
 
     slide = ease_in_out(min(progress * 2.5, 1.0))
     off_x = int(lerp(-w, 0, slide))
@@ -339,11 +339,11 @@ def render(video_path, critique_json_path, output_path):
                 title = pt.get("title", "")
 
                 if ptype == "strength":
-                    color = (50, 205, 50)
+                    color = (50, 205, 50)   # Green
                 elif ptype == "improvement":
-                    color = (50, 130, 255)
+                    color = (50, 50, 220)   # Red
                 else:
-                    color = (30, 140, 255)
+                    color = (30, 165, 255)  # Orange
 
                 for i in range(n):
                     prog = i / max(n - 1, 1)
