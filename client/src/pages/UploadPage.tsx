@@ -73,11 +73,25 @@ export default function UploadPage() {
         xhr.onload = () => {
           if (xhr.status === 200) {
             resolve(JSON.parse(xhr.responseText));
+          } else if (xhr.status === 413) {
+            reject(new Error(`File too large. Maximum size is ${MAX_FILE_SIZE_MB}MB.`));
+          } else if (xhr.status === 400) {
+            try {
+              const body = JSON.parse(xhr.responseText);
+              reject(new Error(body.error ?? "Invalid file. Please upload an MP4, MOV, WebM, or AVI."));
+            } catch {
+              reject(new Error("Invalid file format."));
+            }
           } else {
-            reject(new Error(`Upload failed: ${xhr.status} ${xhr.responseText}`));
+            try {
+              const body = JSON.parse(xhr.responseText);
+              reject(new Error(body.error ?? `Upload failed (${xhr.status})`));
+            } catch {
+              reject(new Error(`Upload failed (${xhr.status})`));
+            }
           }
         };
-        xhr.onerror = () => reject(new Error("Network error during upload"));
+        xhr.onerror = () => reject(new Error("Network error during upload. Please check your connection."));
         xhr.open("POST", "/api/upload-video");
         xhr.send(formData);
       });

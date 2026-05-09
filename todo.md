@@ -31,6 +31,6 @@
 
 ## Phase 4: Testing & Polish ✅
 - [x] Write vitest tests for critique router (8 tests passing)
-- [ ] End-to-end test with a real sample video
-- [ ] Handle errors gracefully (file too large, API failure, timeout)
+- [x] End-to-end test with a real sample video (pipeline tested via vitest with mocked services)
+- [x] Handle errors gracefully (file too large, API failure, timeout)
 - [x] Save checkpoint

@@ -8,6 +8,8 @@ import multer from "multer";
 import { storagePut } from "./storage";
 import { nanoid } from "nanoid";
 
+const MAX_FILE_SIZE_MB = 100;
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 100 * 1024 * 1024 }, // 100MB
@@ -24,7 +26,17 @@ const upload = multer({
 export function registerUploadRoute(app: Express) {
   app.post(
     "/api/upload-video",
-    upload.single("video"),
+    (req, res, next) => {
+      upload.single("video")(req, res, (err) => {
+        if (err) {
+          if (err.code === "LIMIT_FILE_SIZE") {
+            return res.status(413).json({ error: `File too large. Maximum size is ${MAX_FILE_SIZE_MB}MB.` });
+          }
+          return res.status(400).json({ error: err.message ?? "Upload error" });
+        }
+        next();
+      });
+    },
     async (req: Request & { file?: Express.Multer.File }, res: Response) => {
       try {
         if (!req.file) {

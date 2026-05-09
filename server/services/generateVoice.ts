@@ -21,9 +21,13 @@ export async function generateVoiceSegment(
   text: string,
   outputPath: string
 ): Promise<number> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000); // 60s timeout
+
   const response = await fetch(
     `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
     {
+      signal: controller.signal,
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -41,6 +45,8 @@ export async function generateVoiceSegment(
       }),
     }
   );
+
+  clearTimeout(timeout);
 
   if (!response.ok) {
     const err = await response.text();

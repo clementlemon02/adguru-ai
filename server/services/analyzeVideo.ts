@@ -132,7 +132,11 @@ Rules:
 - Be specific: mention exact visual elements you can see in the frames
 - Video duration is ${videoDuration} seconds`;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120_000); // 2 min timeout
+
   const response = await fetch("https://api.openai.com/v1/chat/completions", {
+    signal: controller.signal,
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -157,6 +161,8 @@ Rules:
       ],
     }),
   });
+
+  clearTimeout(timeout);
 
   if (!response.ok) {
     const err = await response.text();
