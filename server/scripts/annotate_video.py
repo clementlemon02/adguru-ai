@@ -66,53 +66,68 @@ def draw_rounded_rect_alpha(img, x1, y1, x2, y2, radius, color, alpha):
 
 
 def draw_annotation_circle(frame, ann, color, alpha):
+    """Draw a single clean annotation circle with subtle glow. ONE circle only."""
     if alpha <= 0 or not ann:
         return
     h, w = frame.shape[:2]
     cx = int(ann["x"] * w)
     cy = int(ann["y"] * h)
-    rx = max(25, int(ann.get("w", 0.2) * w * 0.5))
-    ry = max(25, int(ann.get("h", 0.2) * h * 0.5))
-    r = min(max(rx, ry), 130)
+    # Use the annotation's w/h to determine radius, capped at reasonable size
+    rx = max(30, int(ann.get("w", 0.2) * w * 0.45))
+    ry = max(30, int(ann.get("h", 0.2) * h * 0.45))
+    r = min(max(rx, ry), 140)
 
-    overlay = frame.copy()
-    # Glow rings
-    cv2.circle(overlay, (cx, cy), r + 8, color, 2)
-    cv2.circle(overlay, (cx, cy), r + 4, color, 2)
-    cv2.addWeighted(overlay, alpha * 0.35, frame, 1 - alpha * 0.35, 0, frame)
+    # Subtle filled glow inside the circle
+    glow = frame.copy()
+    cv2.circle(glow, (cx, cy), r, color, -1)
+    cv2.addWeighted(glow, alpha * 0.12, frame, 1 - alpha * 0.12, 0, frame)
 
-    overlay2 = frame.copy()
-    cv2.circle(overlay2, (cx, cy), r, color, 3)
-    cv2.circle(overlay2, (cx, cy), 6, color, -1)
-    cv2.addWeighted(overlay2, alpha, frame, 1 - alpha, 0, frame)
+    # Single clean circle border (thick, solid)
+    border = frame.copy()
+    cv2.circle(border, (cx, cy), r, color, 4)
+    # Small center dot
+    cv2.circle(border, (cx, cy), 5, color, -1)
+    cv2.addWeighted(border, alpha, frame, 1 - alpha, 0, frame)
 
+    # Label above the circle
     label = ann.get("label", "")
     if label and alpha > 0.4:
-        fs = 0.6
+        fs = 0.55
         (tw, th), _ = cv2.getTextSize(label, FONT, fs, 1)
         lx = cx - tw // 2
-        ly = cy - r - 16
-        draw_rounded_rect_alpha(frame, lx - 8, ly - th - 6, lx + tw + 8, ly + 6, 6, color, alpha * 0.9)
+        ly = cy - r - 14
+        draw_rounded_rect_alpha(frame, lx - 8, ly - th - 6, lx + tw + 8, ly + 6, 6, color, alpha * 0.92)
         cv2.putText(frame, label, (lx, ly), FONT, fs, COLOR_WHITE, 1, cv2.LINE_AA)
 
 
-def draw_banner(frame, title, seg_type, progress):
-    if progress <= 0:
-        return
+def draw_banner(frame, title, seg_type, elapsed):
+    """Slide-in banner. Shows for 2.5s then slides out. elapsed = seconds since segment start."""
     h, w = frame.shape[:2]
     color = COLOR_GREEN if seg_type == "strength" else (COLOR_RED if seg_type == "improvement" else COLOR_ORANGE)
-    icon = "✓ STRENGTH" if seg_type == "strength" else ("✗ IMPROVE" if seg_type == "improvement" else "● NOTE")
-    text = f"  {icon}  —  {title[:38].upper()}"
+    icon = "+ STRENGTH" if seg_type == "strength" else ("! IMPROVE" if seg_type == "improvement" else "* NOTE")
+    text = f"  {icon}  {title[:35].upper()}"
+
+    show_dur = 2.5
+    slide_dur = BANNER_SLIDE_SECS
+
+    if elapsed < slide_dur:
+        progress = ease(elapsed / slide_dur)
+    elif elapsed < show_dur:
+        progress = 1.0
+    elif elapsed < show_dur + slide_dur:
+        progress = ease(1.0 - (elapsed - show_dur) / slide_dur)
+    else:
+        return  # fully hidden
 
     fs = 0.78
     (tw, th), _ = cv2.getTextSize(text, FONT, fs, 2)
     banner_h = th + 28
     banner_w = min(tw + 60, w - 40)
 
-    slide = ease(min(progress / BANNER_SLIDE_SECS, 1.0))
-    bx = int(20 - (1 - slide) * (banner_w + 30))
+    x_off = int((1.0 - progress) * -(banner_w + 30))
+    bx = 20 + x_off
     by = 18
-    alpha = min(progress / BANNER_SLIDE_SECS, 1.0) * 0.93
+    alpha = progress * 0.93
 
     draw_rounded_rect_alpha(frame, bx, by, bx + banner_w, by + banner_h, 10, color, alpha)
     cv2.putText(frame, text, (bx + 14, by + th + 10), FONT, fs, COLOR_WHITE, 2, cv2.LINE_AA)
@@ -123,14 +138,20 @@ def draw_subtitle(frame, text, alpha):
         return
     h, w = frame.shape[:2]
 
+    # Adaptive font scale: larger for vertical video (1080x1920)
+    is_vertical = h > w
+    fs = 1.6 if is_vertical else 1.2
+    thick = 2
+
     # Word-wrap
     words = text.split()
     lines = []
     cur = ""
+    max_w = int(w * 0.88)
     for word in words:
         test = (cur + " " + word).strip()
-        (tw, _), _ = cv2.getTextSize(test, FONT, 1.15, 2)
-        if tw > w - 100:
+        (tw, _), _ = cv2.getTextSize(test, FONT, fs, thick)
+        if tw > max_w:
             if cur:
                 lines.append(cur)
             cur = word
@@ -139,25 +160,27 @@ def draw_subtitle(frame, text, alpha):
     if cur:
         lines.append(cur)
 
-    line_h = 52
-    base_y = h - 55
+    (_, lh), _ = cv2.getTextSize("Ag", FONT, fs, thick)
+    line_spacing = int(lh * 1.6)
+    # Position subtitles at 82% height to avoid original video text at the very bottom
+    base_y = int(h * 0.82)
 
     for i, line in enumerate(lines):
-        (tw, th), _ = cv2.getTextSize(line, FONT, 1.15, 2)
+        (tw, th), _ = cv2.getTextSize(line, FONT, fs, thick)
         lx = (w - tw) // 2
-        ly = base_y - (len(lines) - 1 - i) * line_h
+        ly = base_y - (len(lines) - 1 - i) * line_spacing
 
         # Dark pill background
-        pad_x, pad_y = 22, 12
+        pad_x, pad_y = 24, 14
         draw_rounded_rect_alpha(frame,
                                 lx - pad_x, ly - th - pad_y,
                                 lx + tw + pad_x, ly + pad_y,
-                                12, (8, 8, 8), alpha * 0.85)
+                                14, (8, 8, 8), alpha * 0.88)
 
         # Shadow
-        cv2.putText(frame, line, (lx + 2, ly + 2), FONT, 1.15, (0, 0, 0), 3, cv2.LINE_AA)
+        cv2.putText(frame, line, (lx + 2, ly + 2), FONT, fs, (0, 0, 0), thick + 2, cv2.LINE_AA)
         # Main text
-        cv2.putText(frame, line, (lx, ly), FONT, 1.15, COLOR_WHITE, 2, cv2.LINE_AA)
+        cv2.putText(frame, line, (lx, ly), FONT, fs, COLOR_WHITE, thick, cv2.LINE_AA)
 
 
 # ── Audio builder ─────────────────────────────────────────────────────────────
@@ -294,9 +317,9 @@ def render(input_video, critique_json, output_video):
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         out = cv2.VideoWriter(raw_video, fourcc, fps, (w, h))
 
-        # Pre-compute segment timing
+        # Pre-compute NON-OVERLAPPING segment timing
         seg_info = []
-        for seg in segments:
+        for i, seg in enumerate(segments):
             t_start = float(seg.get("timestamp", 0))
             adur = seg.get("audioDuration") or 0
             if adur <= 0:
@@ -306,6 +329,13 @@ def render(input_video, critique_json, output_video):
                 words = len(seg.get("spokenScript", "").split())
                 adur = max(2.5, words / 2.5)
             t_end = t_start + adur
+
+            # CRITICAL FIX: clamp t_end so it does NOT overlap with next segment
+            if i + 1 < len(segments):
+                next_t = float(segments[i + 1].get("timestamp", t_end))
+                t_end = min(t_end, next_t - 0.3)
+            t_end = min(t_end, total_duration)
+            t_end = max(t_end, t_start + 0.5)
 
             # Build subtitle schedule
             chunks = seg.get("subtitleChunks") or []
@@ -319,8 +349,11 @@ def render(input_video, critique_json, output_video):
                 if j + 1 < len(chunks):
                     c_end = t_start + float(chunks[j+1].get("offsetSec", chunk.get("offsetSec", 0) + 3))
                 else:
-                    c_end = t_end + 0.5
-                sub_schedule.append({"text": chunk.get("text", ""), "start": c_start, "end": c_end})
+                    c_end = t_end + 0.3
+                c_start = max(c_start, t_start)
+                c_end = min(c_end, t_end + 0.3)
+                if c_end > c_start:
+                    sub_schedule.append({"text": chunk.get("text", ""), "start": c_start, "end": c_end})
 
             seg_info.append({
                 "t_start": t_start,
@@ -333,6 +366,10 @@ def render(input_video, critique_json, output_video):
                 "audioDuration": adur,
             })
 
+        print(f"[Renderer] Segment windows (non-overlapping):")
+        for si in seg_info:
+            print(f"  [{si['t_start']:.1f}s - {si['t_end']:.1f}s] {si['type']}: {si['title']}")
+
         # ── Frame loop ─────────────────────────────────────────────────────────
         frame_idx = 0
         while True:
@@ -342,20 +379,20 @@ def render(input_video, critique_json, output_video):
 
             t = frame_idx / fps
 
+            # Find the SINGLE active segment (most recent one that has started)
+            active_seg = None
             for si in seg_info:
-                t_start = si["t_start"]
-                t_end = si["t_end"]
+                if si["t_start"] <= t <= si["t_end"]:
+                    active_seg = si  # keep updating — last one wins
+
+            if active_seg is not None:
+                si = active_seg
+                elapsed = t - si["t_start"]
+                remaining = si["t_end"] - t
                 seg_type = si["type"]
                 ann = si["annotation"]
-                is_active = t_start <= t <= t_end
 
-                if not is_active:
-                    continue
-
-                elapsed = t - t_start
-                remaining = t_end - t
-
-                # ── Annotation circle ──────────────────────────────────────────
+                # ── Annotation circle (one circle only) ───────────────────────
                 if ann:
                     if elapsed < CIRCLE_FADE_SECS:
                         circle_alpha = ease(elapsed / CIRCLE_FADE_SECS)
@@ -367,23 +404,25 @@ def render(input_video, critique_json, output_video):
                     draw_annotation_circle(frame, ann, color, circle_alpha)
 
                 # ── Banner ─────────────────────────────────────────────────────
-                banner_show = 2.5  # seconds to show banner
-                if elapsed < banner_show + BANNER_SLIDE_SECS:
-                    draw_banner(frame, si["title"], seg_type, min(elapsed, banner_show))
+                draw_banner(frame, si["title"], seg_type, elapsed)
 
-                # ── Subtitles ──────────────────────────────────────────────────
+                # ── Subtitle — only the current chunk ─────────────────────────
+                current_sub = None
                 for sub in si["sub_schedule"]:
                     if sub["start"] <= t <= sub["end"]:
-                        sub_elapsed = t - sub["start"]
-                        sub_remaining = sub["end"] - t
-                        if sub_elapsed < SUBTITLE_FADE_SECS:
-                            sub_alpha = ease(sub_elapsed / SUBTITLE_FADE_SECS)
-                        elif sub_remaining < SUBTITLE_FADE_SECS:
-                            sub_alpha = ease(sub_remaining / SUBTITLE_FADE_SECS)
-                        else:
-                            sub_alpha = 1.0
-                        draw_subtitle(frame, sub["text"], sub_alpha)
+                        current_sub = sub
                         break
+
+                if current_sub:
+                    sub_elapsed = t - current_sub["start"]
+                    sub_remaining = current_sub["end"] - t
+                    if sub_elapsed < SUBTITLE_FADE_SECS:
+                        sub_alpha = ease(sub_elapsed / SUBTITLE_FADE_SECS)
+                    elif sub_remaining < SUBTITLE_FADE_SECS:
+                        sub_alpha = ease(sub_remaining / SUBTITLE_FADE_SECS)
+                    else:
+                        sub_alpha = 1.0
+                    draw_subtitle(frame, current_sub["text"], sub_alpha)
 
             out.write(frame)
             frame_idx += 1

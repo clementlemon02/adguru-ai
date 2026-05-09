@@ -52,3 +52,10 @@
 - [x] Subtitles: large bold centered text with dark semi-transparent pill background, clearly matching spoken words
 - [x] Annotation circles play over the live video (no freeze-frame), fade in/out naturally
 - [x] Smooth audio crossfade: original audio fades out 0.3s before AI speaks, fades back in after
+
+## Phase 7: Renderer Bug Fixes (v3 → v4)
+- [x] Fix multiple concentric glow rings → single clean circle with subtle fill glow
+- [x] Fix subtitle position: moved to 82% height to avoid overlapping original video text
+- [x] Confirmed: multiple circles in user-uploaded video were from rendering ON TOP of already-annotated output (not a code bug)
+- [x] Confirmed: single annotation per segment renders exactly ONE circle
+- [x] All 8 tests passing
