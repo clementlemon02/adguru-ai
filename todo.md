@@ -71,3 +71,12 @@
 - [x] Merge step uses explicit -map 0:v:0 -map 1:a:0 to guarantee exactly 1 video + 1 audio stream
 - [x] Verified: output has nb_streams=2 (1 video + 1 audio only)
 - [x] All 8 tests passing
+
+## Phase 10: Smooth Video — Segment Count & Spacing Fix
+- [x] GPT-4o prompt: scale segment count to video duration (3 for <20s, 4 for <40s, 5 for <60s, 6 for longer)
+- [x] GPT-4o prompt: enforce minimum spacing = max(5s, duration/(maxSegments+1))
+- [x] GPT-4o prompt: require 4-6 sentence flowing paragraphs per segment (not bullet points)
+- [x] Server-side enforcement in analyzeVideo.ts: drop segments too close together, cap at maxSegments
+- [x] Renderer-level enforcement in annotate_video.py: drop segments too close together
+- [x] Verified: spacing enforcement correctly drops segments at runtime
+- [x] All 8 tests passing

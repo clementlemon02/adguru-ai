@@ -348,6 +348,21 @@ def render(input_video, critique_json, output_video):
         out = cv2.VideoWriter(raw_video, fourcc, fps, (w, h))
 
         # Pre-compute NON-OVERLAPPING segment timing
+        # Renderer-level enforcement: enforce minimum spacing between segments
+        # This is a safety net in case the AI analysis didn't respect the spacing rules
+        min_spacing = max(5.0, total_duration / (len(segments) + 1)) if len(segments) > 0 else 5.0
+        filtered_segments = []
+        last_t = -999.0
+        for seg in segments:
+            t = float(seg.get("timestamp", 0))
+            if t - last_t >= min_spacing or len(filtered_segments) == 0:
+                filtered_segments.append(seg)
+                last_t = t
+            else:
+                print(f"[Renderer] Skipping segment at {t:.1f}s (too close to {last_t:.1f}s, min spacing {min_spacing:.1f}s)")
+        segments = filtered_segments
+        print(f"[Renderer] After spacing enforcement: {len(segments)} segments")
+
         seg_info = []
         for i, seg in enumerate(segments):
             t_start = float(seg.get("timestamp", 0))

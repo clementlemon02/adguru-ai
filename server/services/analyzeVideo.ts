@@ -96,20 +96,25 @@ async function callGPT4oVision(frames: string[], videoDuration: number): Promise
     ];
   }).flat();
 
+  // Scale segment count to video duration — fewer segments = smoother, more professional feel
+  const maxSegments = videoDuration < 20 ? 3 : videoDuration < 40 ? 4 : videoDuration < 60 ? 5 : 6;
+  const minSpacingSec = Math.max(5, Math.floor(videoDuration / (maxSegments + 1)));
+
   const systemPrompt = `You are Alex — a world-class marketing consultant and creative director with 20 years of experience. You are doing a LIVE screen-recording review of a client's marketing video ad, talking naturally as the video plays.
 
 IMPORTANT: You are NOT pausing the video. You are NOT replaying clips. The video plays CONTINUOUSLY and you speak over it at specific moments. Think of it like a commentary track on a DVD — you talk while the video keeps rolling.
 
-Your speech is natural, direct, human. You use real speech patterns:
-- "Okay so right here..."
-- "Watch what happens at this point..."
-- "Here's what I love about this..."
-- "And this is where they lose me..."
-- "Now look at the bottom of the screen..."
-- "See that? That's exactly what you want."
-- "This is the problem — nobody's going to..."
+Your speech is natural, direct, human. You speak in FULL PARAGRAPHS — not bullet points. Each time you speak, you say 4-6 sentences that flow naturally together. You take your time. You don't rush. You let the video breathe between your comments.
 
-You celebrate strengths ENTHUSIASTICALLY and address improvements CONSTRUCTIVELY.
+You use real speech patterns:
+- "Okay so right here, I want to point out something..."
+- "Watch what happens at this point — this is where it gets interesting..."
+- "Here's what I love about this. The way they've framed the product..."
+- "And this is where they lose me. You've got about three seconds on social media..."
+- "Now look at this — see how the lighting draws your eye? That's intentional."
+- "This is the problem. Nobody watching this on their phone is going to..."
+
+You celebrate strengths ENTHUSIASTICALLY and address improvements CONSTRUCTIVELY. You are specific — you reference exactly what's on screen.
 
 Return ONLY valid JSON with this exact schema:
 {
@@ -125,33 +130,37 @@ Return ONLY valid JSON with this exact schema:
   "videoDuration": ${videoDuration},
   "critiqueSegments": [
     {
-      "timestamp": <seconds when Alex starts speaking — must be >= 0 and < ${videoDuration}>,
+      "timestamp": <seconds when Alex starts speaking — must be >= 1 and < ${(videoDuration - 3).toFixed(1)}>,
       "type": "strength" | "improvement" | "observation",
-      "title": "<max 5 words — shown in banner>",
-      "spokenScript": "<2-4 natural spoken sentences. Alex is reacting to what's on screen RIGHT NOW. Conversational, specific, human. No bullet points, no formal language.>",
+      "title": "<max 4 words — shown in banner>",
+      "spokenScript": "<4-6 natural spoken sentences in a single flowing paragraph. Alex is reacting to what's on screen RIGHT NOW. Conversational, specific, human. NO bullet points. NO lists. Just natural speech.>",
       "subtitleChunks": [
-        { "text": "<4-8 words matching exactly what Alex says>", "offsetSec": 0 },
-        { "text": "<next spoken phrase>", "offsetSec": <estimated seconds, ~2.5 words/sec> }
+        { "text": "<5-8 words matching exactly what Alex says>", "offsetSec": 0 },
+        { "text": "<next spoken phrase, 5-8 words>", "offsetSec": <seconds, ~2.5 words/sec> },
+        { "text": "<continue until full script is covered>", "offsetSec": <cumulative seconds> }
       ],
       "annotation": {
-        "x": <0.0-1.0 center x of element being discussed>,
+        "x": <0.0-1.0 center x of the specific element being discussed>,
         "y": <0.0-1.0 center y>,
-        "w": <0.0-1.0 width, typically 0.2-0.5>,
-        "h": <0.0-1.0 height, typically 0.15-0.4>,
+        "w": <0.0-1.0 width, typically 0.2-0.45>,
+        "h": <0.0-1.0 height, typically 0.15-0.35>,
         "label": "<2-3 word label>"
       }
     }
   ]
 }
 
-RULES:
-- Generate 5–8 segments spread naturally across the video timeline
-- Segments must be in chronological order by timestamp
-- Space segments at least 2 seconds apart
-- Mix strengths AND improvements — don't just criticize
-- subtitleChunks: break spokenScript into natural spoken phrases of 4–8 words each. Estimate offsetSec based on ~2.5 words per second speech rate
-- annotation is REQUIRED for every segment — point at a specific visual element
-- Video duration is ${videoDuration.toFixed(1)} seconds`;
+CRITICAL RULES — FOLLOW EXACTLY:
+1. Generate EXACTLY ${maxSegments} segments (no more, no less)
+2. Space segments AT LEAST ${minSpacingSec} seconds apart
+3. First segment must start at least 1 second in
+4. Last segment must end at least 3 seconds before the video ends
+5. Mix strengths AND improvements — at least 1 of each type
+6. Each spokenScript must be 4-6 sentences (enough to fill ${minSpacingSec}+ seconds of speaking time)
+7. subtitleChunks: break spokenScript into natural phrases of 5-8 words each, covering the ENTIRE script
+8. annotation is REQUIRED for every segment — point at a specific visual element on screen
+9. Video duration is ${videoDuration.toFixed(1)} seconds
+10. NEVER put two segments closer than ${minSpacingSec} seconds apart — the video needs breathing room between comments`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120_000);
@@ -206,16 +215,33 @@ RULES:
     parsed.critiqueSegments = [];
   }
 
-  // Sort by timestamp and clamp
+  // Enforce: sort, clamp, minimum spacing, max count
+  const enforcedMaxSegments = videoDuration < 20 ? 3 : videoDuration < 40 ? 4 : videoDuration < 60 ? 5 : 6;
+  const enforcedMinSpacing = Math.max(5, Math.floor(videoDuration / (enforcedMaxSegments + 1)));
+
   parsed.critiqueSegments = parsed.critiqueSegments
     .sort((a, b) => a.timestamp - b.timestamp)
     .map(seg => ({
       ...seg,
-      timestamp: Math.max(0, Math.min(seg.timestamp, videoDuration - 1)),
+      timestamp: Math.max(1, Math.min(seg.timestamp, videoDuration - 3)),
       subtitleChunks: Array.isArray(seg.subtitleChunks) && seg.subtitleChunks.length > 0
         ? seg.subtitleChunks
         : [{ text: seg.spokenScript.slice(0, 40), offsetSec: 0 }],
-    }));
+    }))
+    // Enforce minimum spacing: drop segments that are too close to the previous one
+    .reduce((acc: CritiqueSegment[], seg) => {
+      if (acc.length === 0) return [seg];
+      const prev = acc[acc.length - 1];
+      if (seg.timestamp - prev.timestamp < enforcedMinSpacing) {
+        console.log(`[GPT-4o] Dropping segment at ${seg.timestamp}s (too close to ${prev.timestamp}s, min spacing ${enforcedMinSpacing}s)`);
+        return acc;
+      }
+      return [...acc, seg];
+    }, [])
+    // Cap at max segments
+    .slice(0, enforcedMaxSegments);
+
+  console.log(`[GPT-4o] After enforcement: ${parsed.critiqueSegments.length} segments (max ${enforcedMaxSegments}, min spacing ${enforcedMinSpacing}s)`);
 
   // Also expose as critiquePoints for backward compat with pipeline.ts
   parsed.critiquePoints = parsed.critiqueSegments;
