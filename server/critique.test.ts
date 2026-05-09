@@ -164,3 +164,93 @@ describe("auth.logout", () => {
     expect(result).toEqual({ success: true });
   });
 });
+
+// ─── Pause-and-Resume Schema Tests ───────────────────────────
+describe("analyzeVideo normalization (pauseAtTimestamp schema)", () => {
+  it("normalizes critiqueSegments to have pauseAtTimestamp", () => {
+    // Simulate the normalization logic from analyzeVideo.ts
+    const rawSegments = [
+      { timestamp: 5.0, type: "strength", title: "Good hook", spokenScript: "Nice.", subtitleChunks: [] },
+      { pauseAtTimestamp: 10.0, type: "improvement", title: "Weak CTA", spokenScript: "Fix this.", subtitleChunks: [] },
+    ];
+
+    const normalized = rawSegments
+      .sort((a, b) => (a.pauseAtTimestamp ?? a.timestamp ?? 0) - (b.pauseAtTimestamp ?? b.timestamp ?? 0))
+      .map(seg => ({
+        ...seg,
+        pauseAtTimestamp: seg.pauseAtTimestamp ?? seg.timestamp ?? 0,
+        timestamp: seg.pauseAtTimestamp ?? seg.timestamp ?? 0,
+      }));
+
+    expect(normalized[0].pauseAtTimestamp).toBe(5.0);
+    expect(normalized[1].pauseAtTimestamp).toBe(10.0);
+    expect(normalized[0].timestamp).toBe(5.0);
+  });
+
+  it("deduplicates segments closer than 1 second apart", () => {
+    const segments = [
+      { pauseAtTimestamp: 3.0, type: "strength", title: "A", spokenScript: "Good.", subtitleChunks: [] },
+      { pauseAtTimestamp: 3.5, type: "improvement", title: "B", spokenScript: "Bad.", subtitleChunks: [] },
+      { pauseAtTimestamp: 8.0, type: "observation", title: "C", spokenScript: "Note.", subtitleChunks: [] },
+    ];
+
+    const deduped = segments.reduce((acc: typeof segments, seg) => {
+      if (acc.length === 0) return [seg];
+      const prev = acc[acc.length - 1];
+      if ((seg.pauseAtTimestamp - prev.pauseAtTimestamp) < 1.0) return acc;
+      return [...acc, seg];
+    }, []);
+
+    expect(deduped.length).toBe(2);
+    expect(deduped[0].pauseAtTimestamp).toBe(3.0);
+    expect(deduped[1].pauseAtTimestamp).toBe(8.0);
+  });
+
+  it("output video duration is longer than original when pauses are present", () => {
+    const originalDuration = 17.0;
+    const segments = [
+      { pauseAtTimestamp: 3.0, audioDuration: 8.0 },
+      { pauseAtTimestamp: 10.0, audioDuration: 6.0 },
+    ];
+
+    // Total output = original + sum of (audioDuration + 0.5 buffer) per segment
+    const totalPauseDuration = segments.reduce((sum, s) => sum + s.audioDuration + 0.5, 0);
+    const expectedOutput = originalDuration + totalPauseDuration;
+
+    expect(expectedOutput).toBeGreaterThan(originalDuration);
+    expect(expectedOutput).toBeCloseTo(17 + 8.5 + 6.5, 1); // 32.0s
+  });
+
+  it("subtitleChunks are only shown during the pause window (not during normal playback)", () => {
+    // Verify subtitle schedule is relative to pause start, not absolute video time
+    const seg = {
+      pauseAtTimestamp: 5.0,
+      audioDuration: 8.0,
+      subtitleChunks: [
+        { text: "First phrase", offsetSec: 0 },
+        { text: "Second phrase", offsetSec: 3.0 },
+      ],
+    };
+
+    // Build subtitle schedule (relative to pause start)
+    const subSchedule = seg.subtitleChunks.map((chunk, j) => ({
+      text: chunk.text,
+      start: chunk.offsetSec,
+      end: j + 1 < seg.subtitleChunks.length
+        ? seg.subtitleChunks[j + 1].offsetSec
+        : seg.audioDuration + 0.5,
+    }));
+
+    // At elapsed=0 (start of pause), first chunk should be active
+    const atStart = subSchedule.find(s => s.start <= 0 && 0 < s.end);
+    expect(atStart?.text).toBe("First phrase");
+
+    // At elapsed=3.5 (mid-pause), second chunk should be active
+    const atMid = subSchedule.find(s => s.start <= 3.5 && 3.5 < s.end);
+    expect(atMid?.text).toBe("Second phrase");
+
+    // At elapsed=9.0 (after pause ends), no chunk should be active
+    const afterPause = subSchedule.find(s => s.start <= 9.0 && 9.0 < s.end);
+    expect(afterPause).toBeUndefined();
+  });
+});

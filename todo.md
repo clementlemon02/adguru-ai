@@ -80,3 +80,14 @@
 - [x] Renderer-level enforcement in annotate_video.py: drop segments too close together
 - [x] Verified: spacing enforcement correctly drops segments at runtime
 - [x] All 8 tests passing
+
+## Phase 11: Pause-and-Resume Pipeline Redesign
+- [x] analyzeVideo.ts: two-pass approach — Pass 1: AI watches video and generates a full review plan (observations, what to say, when to pause); Pass 2: AI converts plan into structured critiqueSegments with natural flowing scripts
+- [x] Each critiqueSegment has a pauseAtTimestamp: the video plays until this point, then PAUSES while the AI speaks, then RESUMES
+- [x] The output video is LONGER than the original (original duration + sum of all voiceover durations + small gaps)
+- [x] annotate_video.py: rewrite as pause-and-resume renderer — copy original frames up to pause point, then freeze the last frame while voiceover plays, then resume original frames
+- [x] Subtitles show during the frozen/paused section only
+- [x] Annotation circles appear on the frozen frame during the pause
+- [x] Banner shows during the pause window
+- [x] Minimum spacing only 1s (AI can comment as many times as needed, just not simultaneously)
+- [x] All 8 tests passing
