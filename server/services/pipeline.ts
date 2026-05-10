@@ -38,11 +38,17 @@ export async function runCritiquePipeline(
     const voiceDir = path.join(tmpDir, "voice");
     const voiceSegments = await generateAllVoiceSegments(segments, voiceDir);
 
-    // Attach audio paths to segments for the renderer
+    // Attach audio paths and REAL Whisper subtitle chunks to segments for the renderer
+    // voiceSegments[i].subtitleChunks contains real timestamps from Whisper transcription
+    // These replace the GPT-estimated subtitleChunks so subtitles match actual speech
     const segmentsWithAudio = segments.map((seg, i) => ({
       ...seg,
       audioPath: voiceSegments[i]?.audioPath ?? "",
       audioDuration: voiceSegments[i]?.audioDuration ?? 0,
+      // Override GPT-estimated subtitleChunks with real Whisper timestamps
+      subtitleChunks: voiceSegments[i]?.subtitleChunks?.length
+        ? voiceSegments[i].subtitleChunks
+        : seg.subtitleChunks,
     }));
 
     // ─── Step 3: Render annotated video ────────────────────

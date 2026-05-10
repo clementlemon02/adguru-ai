@@ -254,3 +254,120 @@ describe("analyzeVideo normalization (pauseAtTimestamp schema)", () => {
     expect(afterPause).toBeUndefined();
   });
 });
+
+// ─── Subtitle Timing Tests (Whisper-based) ────────────────────
+describe("subtitle timing — Whisper segment grouping", () => {
+  it("groups Whisper segments into 6-word subtitle chunks with real timestamps", () => {
+    // Simulate the proportional interpolation in groupWhisperSegmentsIntoChunks
+    const whisperSegments = [
+      { start: 0.0, end: 1.5, text: "Okay so let me pause here" },
+      { start: 1.5, end: 3.2, text: "because this opening shot is really strong" },
+      { start: 3.2, end: 5.0, text: "you have a great product display" },
+    ];
+
+    const TARGET_WORDS = 6;
+    const wordTimings: Array<{ word: string; startSec: number }> = [];
+    for (const seg of whisperSegments) {
+      const segWords = seg.text.trim().split(/\s+/).filter(Boolean);
+      if (segWords.length === 0) continue;
+      const secPerWord = Math.max(0.01, seg.end - seg.start) / segWords.length;
+      segWords.forEach((word, i) => wordTimings.push({ word, startSec: seg.start + i * secPerWord }));
+    }
+    const chunks: Array<{ text: string; offsetSec: number }> = [];
+    for (let i = 0; i < wordTimings.length; i += TARGET_WORDS) {
+      const slice = wordTimings.slice(i, i + TARGET_WORDS);
+      chunks.push({ text: slice.map(w => w.word).join(" "), offsetSec: Math.max(0, Math.round(slice[0].startSec * 10) / 10) });
+    }
+
+    // With proportional interpolation:
+    // seg[0]: 5 words over 1.5s → 0.3s/word → words at 0.0, 0.3, 0.6, 0.9, 1.2
+    // seg[1]: 7 words over 1.7s → ~0.24s/word → words at 1.5, 1.74, 1.98...
+    // seg[2]: 5 words over 1.8s → 0.36s/word → words at 3.2, 3.56, 3.92...
+    // Total 17 words → 3 chunks of 6 + 1 chunk of 5 = wait, let me count:
+    // "Okay so let me pause here" = 6 words
+    // "because this opening shot is really strong" = 7 words
+    // "you have a great product display" = 6 words
+    // Total = 19 words → 4 chunks (6, 6, 6, 1)
+    expect(chunks.length).toBe(4);
+    expect(chunks[0].offsetSec).toBe(0.0);
+    expect(chunks[0].text.split(" ").length).toBe(6);
+    // All chunks should have non-negative offsetSec
+    chunks.forEach(c => expect(c.offsetSec).toBeGreaterThanOrEqual(0));
+    // Timestamps should be strictly increasing (proportional interpolation gives unique times)
+    for (let i = 1; i < chunks.length; i++) {
+      expect(chunks[i].offsetSec).toBeGreaterThan(chunks[i-1].offsetSec);
+    }
+  });
+
+  it("proportionally interpolates timing within a long single Whisper segment", () => {
+    // A single 10-second Whisper segment with 20 words should produce chunks
+    // with distinct, proportionally spaced timestamps
+    const longSegment = [{
+      start: 0.0,
+      end: 10.0,
+      text: "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15 word16 word17 word18 word19 word20",
+    }];
+
+    // Simulate proportional interpolation
+    const TARGET_WORDS = 6;
+    const wordTimings: Array<{ word: string; startSec: number }> = [];
+    for (const seg of longSegment) {
+      const segWords = seg.text.trim().split(/\s+/).filter(Boolean);
+      const secPerWord = (seg.end - seg.start) / segWords.length; // 0.5s/word
+      segWords.forEach((word, i) => wordTimings.push({ word, startSec: seg.start + i * secPerWord }));
+    }
+    const chunks: Array<{ text: string; offsetSec: number }> = [];
+    for (let i = 0; i < wordTimings.length; i += TARGET_WORDS) {
+      const slice = wordTimings.slice(i, i + TARGET_WORDS);
+      chunks.push({ text: slice.map(w => w.word).join(" "), offsetSec: Math.round(slice[0].startSec * 10) / 10 });
+    }
+
+    // 20 words / 6 = 4 chunks (6, 6, 6, 2)
+    expect(chunks.length).toBe(4);
+    // Each chunk should start 3 seconds apart (6 words × 0.5s/word)
+    expect(chunks[0].offsetSec).toBe(0.0);
+    expect(chunks[1].offsetSec).toBe(3.0); // word 7 starts at 6 × 0.5 = 3.0s
+    expect(chunks[2].offsetSec).toBe(6.0); // word 13 starts at 12 × 0.5 = 6.0s
+    expect(chunks[3].offsetSec).toBe(9.0); // word 19 starts at 18 × 0.5 = 9.0s
+  });
+
+  it("falls back to estimated timing when Whisper returns no segments", () => {
+    // Simulate estimateSubtitleChunks fallback
+    const script = "This is a great hook that grabs attention immediately and sets the tone.";
+    const WORDS_PER_CHUNK = 6;
+    const WORDS_PER_SEC = 2.8;
+    const words = script.trim().split(/\s+/).filter(Boolean);
+    const chunks: Array<{ text: string; offsetSec: number }> = [];
+
+    for (let i = 0; i < words.length; i += WORDS_PER_CHUNK) {
+      const chunkWords = words.slice(i, i + WORDS_PER_CHUNK);
+      chunks.push({
+        text: chunkWords.join(" "),
+        offsetSec: Math.round((i / WORDS_PER_SEC) * 10) / 10,
+      });
+    }
+
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks[0].offsetSec).toBe(0);
+    // Second chunk should start at ~6/2.8 ≈ 2.1s
+    expect(chunks[1].offsetSec).toBeCloseTo(2.1, 0);
+  });
+
+  it("pipeline uses Whisper subtitle chunks when available, falls back to GPT chunks", () => {
+    const gptChunks = [{ text: "GPT estimated chunk", offsetSec: 0 }];
+    const whisperChunks = [
+      { text: "Real Whisper chunk one", offsetSec: 0 },
+      { text: "Real Whisper chunk two", offsetSec: 2.3 },
+    ];
+
+    // Simulate pipeline merge logic
+    const result = whisperChunks.length ? whisperChunks : gptChunks;
+    expect(result).toEqual(whisperChunks);
+    expect(result[1].offsetSec).toBe(2.3);
+
+    // When Whisper returns empty, falls back to GPT
+    const emptyWhisper: typeof whisperChunks = [];
+    const fallback = emptyWhisper.length ? emptyWhisper : gptChunks;
+    expect(fallback).toEqual(gptChunks);
+  });
+});

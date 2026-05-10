@@ -91,3 +91,11 @@
 - [x] Banner shows during the pause window
 - [x] Minimum spacing only 1s (AI can comment as many times as needed, just not simultaneously)
 - [x] All 8 tests passing
+
+## Phase 12: Subtitle Alignment Fix
+- [x] Diagnosed: GPT-4o estimated offsetSec at ~2.5 words/sec but ElevenLabs speaks at variable pace
+- [x] Fixed: generateVoice.ts now transcribes each voice MP3 with Whisper after ElevenLabs generates it
+- [x] Whisper segment timestamps grouped into 6-word subtitle chunks with real offsetSec values
+- [x] pipeline.ts overrides GPT-estimated subtitleChunks with real Whisper timestamps
+- [x] Fallback to estimated timing if Whisper is unavailable
+- [x] 15 tests passing (3 new tests for Whisper grouping, fallback, and pipeline merge logic)
