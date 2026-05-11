@@ -215,7 +215,7 @@ export default function UploadPage() {
           {/* Info cards */}
           <div className="grid grid-cols-3 gap-3 mt-6">
             {[
-              { icon: "🧠", label: "GPT-4o Analysis", desc: "Frame-by-frame AI review" },
+              { icon: "🧠", label: "GPT-5.5 Analysis", desc: "Frame-by-frame AI review" },
               { icon: "🎙️", label: "ElevenLabs Voice", desc: "Expert voiceover" },
               { icon: "🎯", label: "Visual Annotations", desc: "Circles on key elements" },
             ].map((item, i) => (

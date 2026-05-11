@@ -123,7 +123,6 @@ Write in plain prose — no JSON, no bullet points. Just your honest, expert thi
     body: JSON.stringify({
       model: "gpt-5.5",
       max_completion_tokens: 2000,
-      temperature: 0.8,
       messages: [
         { role: "system", content: systemPrompt },
         {
@@ -234,7 +233,6 @@ RULES:
     body: JSON.stringify({
       model: "gpt-5.5",
       max_completion_tokens: 5000,
-      temperature: 0.6,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: systemPrompt },
