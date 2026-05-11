@@ -99,3 +99,7 @@
 - [x] pipeline.ts overrides GPT-estimated subtitleChunks with real Whisper timestamps
 - [x] Fallback to estimated timing if Whisper is unavailable
 - [x] 15 tests passing (3 new tests for Whisper grouping, fallback, and pipeline merge logic)
+
+## Phase 13: GPT-5.5 Upgrade
+- [x] Upgraded analyzeVideo.ts from GPT-4o to GPT-5.5 for better video understanding and reasoning
+- [x] All 16 tests passing with new model

@@ -1,5 +1,5 @@
 /**
- * AdGuru AI — GPT-4o Video Analysis Service (v4 — Pause & Resume)
+ * AdGuru AI — GPT-5.5 Video Analysis Service (v5 — Pause & Resume)
  *
  * Two-pass approach:
  *   Pass 1: AI watches video frames and writes a free-form review plan
@@ -121,7 +121,7 @@ Write in plain prose — no JSON, no bullet points. Just your honest, expert thi
       Authorization: `Bearer ${OPENAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o",
+      model: "gpt-5.5",
       max_tokens: 2000,
       temperature: 0.8,
       messages: [
@@ -232,7 +232,7 @@ RULES:
       Authorization: `Bearer ${OPENAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o",
+      model: "gpt-5.5",
       max_tokens: 5000,
       temperature: 0.6,
       response_format: { type: "json_object" },
